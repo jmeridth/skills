@@ -29,3 +29,8 @@ repos:
     rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
       - id: actionlint
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: 5b5dddc4fb0f83c3ea1fc5616fa63e115dce83e0  # frozen: v0.49.1
+    hooks:
+      - id: markdownlint

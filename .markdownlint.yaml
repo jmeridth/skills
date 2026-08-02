@@ -1,0 +1,28 @@
+# markdownlint configuration
+# https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+default: true
+
+# Skill files carry long prose and wide tables; wrapping them hurts readability.
+MD013: false
+
+# Skills legitimately embed HTML-style tags (<example>, <system-reminder>, etc.).
+MD033: false
+
+# SKILL.md files begin with YAML frontmatter, not a top-level heading.
+MD041: false
+
+# Repeated headings under different parents (e.g. "Correct" / "Incorrect") are fine.
+MD024:
+  siblings_only: true
+
+# Skill examples deliberately use bare fences to show generic blocks; a forced
+# language label would be misleading noise.
+MD040: false
+
+# Go code samples use tabs by convention; don't rewrite them to spaces.
+MD010:
+  code_blocks: false
+
+# Table pipe alignment is purely cosmetic and not reliably auto-fixable for
+# tables with widely varying cell widths; not worth the per-edit friction.
+MD060: false
