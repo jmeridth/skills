@@ -10,10 +10,22 @@ When asked to review a PR (by link or from current context) or the current featu
 
 ### Multi-model review
 
-- Launch **at least 3 code review agents in parallel** using different available models to get diverse perspectives
-- Always display which models were used by each agent
-- Synthesize findings across all models - only surface issues that multiple models flag or that can be independently verified
-- Present a unified, deduplicated report organized by severity
+Scale the number of review agents (and which models) to the size and severity of the change, rather than always using a fixed count.
+
+**First, assess the diff.** Count the changed lines (additions + deletions, **excluding** generated code, vendored deps, and lockfiles such as `go.sum`/`package-lock.json`), and identify what the change touches. Then pick the tier below and **state which tier and models you are using and why**.
+
+| Tier | When | Agents (models) |
+|------|------|-----------------|
+| **Docs/trivial** | Docs, comments, config, or other non-logic changes only | 1 agent: **Sonnet 5** |
+| **Small** | ≤ 150 changed lines, low risk, no security-sensitive paths | 1 agent: **Fable 5** |
+| **Medium** | ~150–400 changed lines, **or** any security-sensitive path | 2 agents: **Opus 4.8 + Fable 5** |
+| **Large / critical** | > 400 changed lines, **or** high-severity / security-critical surface | 4 agents: **Opus 4.8, Sonnet 5, Haiku 4.5, Fable 5** |
+
+- **Severity overrides size.** Risk bumps the tier **up** regardless of line count: treat auth, crypto/signing, token or secret handling, HTTP handlers, `exec`, SQL, or access-control changes as **at least Medium** even for a tiny diff. When unsure, round up a tier.
+- **Fable is always included** except the Docs/trivial tier (which is Sonnet only).
+- **For any PR ≤ 150 changed lines, report the size and confirm the tier with me before launching agents.**
+- Launch the chosen agents in parallel, each on a different model. **Always display which models were used.**
+- Synthesize findings across all models — surface only issues that multiple models flag or that you independently verify. Present a unified, deduplicated report organized by severity.
 
 ### Verification standard
 
