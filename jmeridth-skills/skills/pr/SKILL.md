@@ -12,7 +12,12 @@ description: Create a good pull request
 - **Always assign me (`jmeridth`) as the assignee** when opening PRs - this helps me track work in progress and follow up
 - Always check a PR's status (open/merged/closed) before pushing commits to it
 - Format the pull request description using the PR contract headings:
-  - **Issue references (top, above What/Why)** -- If the PR relates to or resolves an issue, put the reference line(s) at the very top of the body, above the `## What/Why` heading. Use `Relates to #<n>` for a non-resolving link, and `Fixes #<n>` / `Closes #<n>` only when merging the PR should actually close that issue. One reference per line.
+  - **Issue references (top, above What/Why)** -- If the PR is connected to an issue or ticket, put the reference line(s) at the very top of the body, above the `## What/Why` heading. One reference per line.
+    - **Deduce the right keyword yourself** -- do not ask which keyword to use. Read the issue (`gh issue view <n>`), compare it against the PR's full diff, and decide:
+      - The diff fully implements or resolves what the issue asks for -> use `Fixes #<n>` (bugs) or `Closes #<n>` (features/tasks) so GitHub auto-closes the issue on merge.
+      - The diff is partial progress, or only touches the issue's topic -> use `Relates to #<n>`.
+    - **`Relates to` is not the safe default** -- picking it "to be safe" when the PR actually resolves the issue leaves the issue open after merge, which is worse than the reverse mistake. When the diff covers everything the issue describes, commit to `Fixes`/`Closes`.
+    - For issues in another repository, use the full form (`Fixes owner/repo#<n>`).
   - **## What/Why** -- Intent in 1-2 sentences. Combine the what and why into a single concise statement.
   - **## Proof it works** -- Tests passed, manual verification steps, screenshots, or logs. Do not list linting results here -- linting is a given. Focus on meaningful tests: unit tests, integration tests, manual verification, etc.
   - **## Risk + AI role** -- Risk tier (low/medium/high) and which parts were AI-generated (e.g., "high -- touches payments"). If no AI was involved, say so.
