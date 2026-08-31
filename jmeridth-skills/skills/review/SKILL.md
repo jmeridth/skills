@@ -8,6 +8,15 @@ argument-hint: [pr-url | pr-number | branch]
 
 When asked to review a PR (by link or from current context) or the current feature branch, follow this workflow automatically:
 
+### First question: should we do this?
+
+Before assessing the diff or launching any review agents, answer "should we do this?" - is the change itself worth making, regardless of how well it is implemented?
+
+- Read the PR description, linked issues, and enough context to understand the intent
+- Consider: does this solve a real problem? Is this the right layer/repo for it? Does it duplicate existing functionality? Does it conflict with the project's direction or an existing approach?
+- State your answer explicitly in the review output before any findings
+- If the answer is "no" or "unclear", stop and raise that with me before doing the line-by-line review - a well-implemented change we should not make is still a change we should not make
+
 ### Multi-model review
 
 Scale the number of review agents (and which models) to the size and severity of the change, rather than always using a fixed count.
