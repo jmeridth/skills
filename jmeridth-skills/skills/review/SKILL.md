@@ -8,6 +8,15 @@ argument-hint: [pr-url | pr-number | branch]
 
 When asked to review a PR (by link or from current context) or the current feature branch, follow this workflow automatically:
 
+### Pull latest first (mandatory)
+
+Before assessing anything or launching agents, sync to the PR's current state. A stale checkout produces findings against code the author has already changed, wasting a full multi-model pass and risking re-opening things that are already fixed.
+
+- Fetch the PR's current head SHA (`gh pr view <pr> --json headRefOid`) and review against that exact SHA — never whatever a local branch or existing worktree happens to point at.
+- If you build a worktree, create it at that head SHA. If a worktree already exists, update it to the current head before reading any code, and re-confirm the head has not moved since.
+- Read existing review threads and review submission bodies first (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `.../pulls/{n}/reviews`, and the GraphQL review threads). Note which findings are already raised, or already fixed in a newer commit, and do not re-report them.
+- For any cross-repo dependency, fetch it at its own current ref too, never trust a stale local copy.
+
 ### First question: should we do this?
 
 Before assessing the diff or launching any review agents, answer "should we do this?" - is the change itself worth making, regardless of how well it is implemented?
