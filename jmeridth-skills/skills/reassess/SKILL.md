@@ -31,7 +31,9 @@ gh pr list --state open --limit 100 \
 
 ### 4. Classify each PR into one of three buckets
 
-**A. My PRs with new activity** (PRs authored by the login from step 2)
+#### A. My PRs with new activity
+
+PRs authored by the login from step 2:
 
 - Fetch all activity: `gh pr view {number} --json comments,reviews,commits`
 - Also fetch inline review comments: `gh api repos/{owner}/{repo}/pulls/{number}/comments`
@@ -40,14 +42,14 @@ gh pr list --state open --limit 100 \
 - If someone else's activity is newer than mine, the PR goes in bucket A - there is feedback I have not addressed
 - If a review thread is already resolved, do not count it as new activity
 
-**B. PRs I reviewed where the author has pushed updates**
+#### B. PRs I reviewed where the author has pushed updates
 
 - Candidates: `gh pr list --state open --search "reviewed-by:{login}" --json number,title,author` minus my own PRs
 - For each, get my latest review time (`gh pr view {number} --json reviews`, filter to my login, take the newest `submittedAt`) and the head commit time (`gh pr view {number} --json commits`, take the last `committedDate`)
 - If the head commit is newer than my last review, the PR goes in bucket B - my review is stale and needs a re-review
 - If my last review was an approval and nothing else changed besides the new commits, still include it, but note it was previously approved
 
-**C. New PRs that need review**
+#### C. New PRs that need review
 
 - Explicit requests: `gh pr list --state open --search "review-requested:{login}" --json number,title,author`
 - Plus any open non-draft PR not authored by me where I have left no review and no comment
