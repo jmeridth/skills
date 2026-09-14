@@ -65,6 +65,19 @@ Scale the number of review agents (and which models) to the size and severity of
 - For **first-time contributors**, lead with what was done well, be warm and specific about how to fix issues, and provide step-by-step guidance rather than terse criticism
 - For established contributors or teammates, be concise and direct
 
+### Writing style
+
+- **Keep the top-level summary short.** Lead with the verdict and any blockers. Positives are optional for established contributors; when included, cap them at 2-3 bullet points, never paragraphs.
+- **Structure every inline comment as claim, then evidence, then action.** The first sentence states the claim and its impact. Follow with the evidence. End with the requested action or a suggestion block.
+- **One idea per sentence.** If a sentence carries two ideas, split it.
+- **Use active voice and let verbs drive sentences.** Do not stack modifiers on an abstract noun and rest the sentence on "is".
+  - ✅ "The loop ends only because each attempt consumes clock time."
+  - ❌ "Loop termination relies on the clock advancing each iteration." - hides two actions behind two nouns
+  - ✅ "A queued writer now waits past its own deadline. That is a regression for the tail."
+  - ❌ "The mutex deadline-not-honored behavior is a real queued-tail regression." - stacks four modifiers on "behavior" and rests on "is"
+- **Delete aggressively before posting.** Reread each drafted comment and cut every sentence that does not change what the author will do next.
+- For more prose guidance, see [Refactoring English](https://refactoringenglish.com/contents/) - especially "Get to the Point", "Respect the Reader's Mental Bandwidth", "Verbs Drive the Sentence", "Passive Voice Considered Harmful", "Delete Aggressively", and "Eliminate Ambiguity".
+
 ### AI attribution
 
 - **Every summary and every PR comment** produced by this skill must start with `:robot:` on the first line so the PR author knows it is an AI-generated review.
