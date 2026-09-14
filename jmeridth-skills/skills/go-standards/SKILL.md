@@ -214,6 +214,20 @@ func main() {
 }
 ```
 
+### Modern Go Idioms (Go 1.26+)
+
+When the module's `go.mod` declares Go 1.26 or newer, write the modern form; `golangci-lint`'s `modernize` analyzer flags most of the old forms on changed lines, and `go fix -diff ./...` from a module lists anything left. Examples and the cases to leave alone are in [modern Go idioms](references/modern-go.md).
+
+- `errors.AsType[*T](err)` instead of `var t *T; errors.As(err, &t)`. The type parameter must implement `error`; keep `errors.As` for anonymous interfaces such as `interface{ ExitStatus() int }`.
+- `strings.Cut`/`CutPrefix`/`CutSuffix` instead of `SplitN(s, sep, 2)` or `Index` plus slicing; `strings.SplitSeq`/`FieldsSeq` when the pieces are only ranged over.
+- `new(expr)` instead of pointer helpers (`ptr(x)`, `proto.String(x)`, `github.Ptr(x)`). Do not define new `func ptr[T any](v T) *T` helpers.
+- Promoted fields directly in composite literals: `Outer{Name: "x"}` instead of `Outer{Inner: Inner{Name: "x"}}`.
+- `for i, v := range slices.Backward(s)` instead of `for i := len(s) - 1; i >= 0; i--`.
+- `slices.Contains`/`Index`/`SortFunc` and `maps.Keys` instead of hand-written loops and `sort.Slice`; builtin `min`/`max` instead of if/else assignment.
+- Never rewrite `omitempty` to `omitzero` as part of a modernization; it changes wire behavior.
+
+**Audit:** Search `.go` files for `errors\.As\(`, `SplitN\(.*, 2\)`, `Split\(.*\)\[0\]`, `func \w+\[T any\]\(v T\) \*T`, `for \w+ := len\(.*\) - 1; .*--`, and `sort\.Slice\(`. Each hit is a violation unless one of the leave-alone cases in the reference applies.
+
 ## Preferred Libraries
 
 **Scope rule:** Only flag library-related violations when the code ALREADY uses or imports the relevant library. Specifically:
