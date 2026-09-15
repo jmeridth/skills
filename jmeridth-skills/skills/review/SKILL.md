@@ -65,7 +65,15 @@ Scale the number of review agents (and which models) to the size and severity of
 - For **first-time contributors**, lead with what was done well, be warm and specific about how to fix issues, and provide step-by-step guidance rather than terse criticism
 - For established contributors or teammates, be concise and direct
 
+### AI attribution
+
+- **Every summary and every PR comment** produced by this skill must start with `:robot:` on the first line so the PR author knows it is an AI-generated review.
+- **The overall review summary or verdict comment** (for example the body posted with an approval, or a top-level recap of the whole review) uses `:robot: (summary)`. It is a summary, not a finding, so it carries no severity tag. Individual findings still carry their own severities in their own line comments.
+- **Every line-level finding comment** adds, immediately after the `:robot:` emoji, a parenthetical severity tag, with `non-blocking` only when it applies: `:robot: (critical)`, `:robot: (high)`, `:robot: (medium)`, `:robot: (low, non-blocking)`. Severity reflects correctness impact (critical/high/medium/low). **`critical`, `high`, and `medium` are always merge blockers and never get `non-blocking`.** Only `low` (or an other/informational tag) may be marked `non-blocking`, for reporting-fidelity gaps, style-adjacent notes, or anything that need not gate the merge.
+
 ### Writing style
+
+Apply these to every summary and every comment. This is load-bearing: a review that ignores it reads as bot noise regardless of how good the findings are. Run the pre-post checklist in **Drafting comments** before you show or post any draft.
 
 - **Keep the top-level summary short.** Lead with the verdict and any blockers. Positives are optional for established contributors; when included, cap them at 2-3 bullet points, never paragraphs.
 - **Structure every inline comment as claim, then evidence, then action.** The first sentence states the claim and its impact. Follow with the evidence. End with the requested action or a suggestion block.
@@ -75,18 +83,19 @@ Scale the number of review agents (and which models) to the size and severity of
   - ❌ "Loop termination relies on the clock advancing each iteration." - hides two actions behind two nouns
   - ✅ "A queued writer now waits past its own deadline. That is a regression for the tail."
   - ❌ "The mutex deadline-not-honored behavior is a real queued-tail regression." - stacks four modifiers on "behavior" and rests on "is"
+- **No em dashes and no exclamation points.** Restructure the sentence instead.
 - **Delete aggressively before posting.** Reread each drafted comment and cut every sentence that does not change what the author will do next.
 - For more prose guidance, see [Refactoring English](https://refactoringenglish.com/contents/) - especially "Get to the Point", "Respect the Reader's Mental Bandwidth", "Verbs Drive the Sentence", "Passive Voice Considered Harmful", "Delete Aggressively", and "Eliminate Ambiguity".
-
-### AI attribution
-
-- **Every summary and every PR comment** produced by this skill must start with `:robot:` on the first line so the PR author knows it is an AI-generated review.
-- **The overall review summary or verdict comment** (for example the body posted with an approval, or a top-level recap of the whole review) uses `:robot: (summary)`. It is a summary, not a finding, so it carries no severity tag. Individual findings still carry their own severities in their own line comments.
-- **Every line-level finding comment** adds, immediately after the `:robot:` emoji, a parenthetical severity tag, with `non-blocking` only when it applies: `:robot: (critical)`, `:robot: (high)`, `:robot: (medium)`, `:robot: (low, non-blocking)`. Severity reflects correctness impact (critical/high/medium/low). **`critical`, `high`, and `medium` are always merge blockers and never get `non-blocking`.** Only `low` (or an other/informational tag) may be marked `non-blocking`, for reporting-fidelity gaps, style-adjacent notes, or anything that need not gate the merge.
 
 ### Drafting comments
 
 - If findings warrant PR comments, draft them in my voice and **show me the draft before posting**
+- **Before you show or post any summary or comment, apply the Writing style rules above and run this checklist:**
+  - claim then evidence then action for a comment; verdict and blockers first for the summary
+  - one idea per sentence, active voice
+  - no em dashes, no exclamation points
+  - summary short, positives capped at 2-3 bullets
+  - delete every sentence that does not change what the author does next
 - When specific code changes are needed, use GitHub suggestion blocks
 - One actionable point per comment - do not bundle multiple concerns
 - Each comment must begin with `:robot:` per the attribution rule above
