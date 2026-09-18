@@ -51,6 +51,9 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | `go-security-review` | Security-focused differential review of Go changes with regression test generation. |
 | `skill-authoring` | Enforce the agentskills.io specification when creating or auditing skills. |
 | `obsidian-daily` | Summarize recent work into today's Obsidian daily note without duplicating. |
+| `humanize-comments` | Rewrite review, doc, and issue comments so they read short, plain, and non-prescriptive. |
+| `draft-description` | Draft a PR description using a what/why/notes format with a Linear magic-word reference. |
+| `writing-clearly-and-concisely` | Apply Strunk's rules for clear prose and flag common AI writing patterns. |
 
 ## Uninstall
 
