@@ -23,6 +23,7 @@ Use this skill whenever you write prose for humans:
 - **Editing** - Improving clarity of existing text
 
 **Trigger phrases:**
+
 - "Write documentation for..."
 - "Draft a README"
 - "Edit this for clarity"
@@ -142,6 +143,7 @@ writing-clearly-and-concisely/
 ## Installation
 
 **Claude Code:**
+
 ```bash
 cp -r skills/writing-clearly-and-concisely ~/.claude/skills/
 ```

@@ -41,7 +41,7 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | Skill | What it does |
 | --- | --- |
 | `commit` | Create a meaningful git commit message based on the current changes. |
-| `pr` | Create a good pull request. |
+| `pr` | Open a pull request: gather context, draft and copyedit a short description, set assignee and labels. |
 | `pr-comments` | Fetch, assess, and address PR review comments, then reply and resolve threads. |
 | `review` | Review a PR or the current feature branch with a multi-model, verification-first workflow. |
 | `reassess` | Scan open PRs for new comments on yours, stale reviews, and PRs awaiting review. |
@@ -52,7 +52,6 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | `skill-authoring` | Enforce the agentskills.io specification when creating or auditing skills. |
 | `obsidian-daily` | Summarize recent work into today's Obsidian daily note without duplicating. |
 | `humanize-comments` | Rewrite review, doc, and issue comments so they read short, plain, and non-prescriptive. |
-| `draft-description` | Draft a PR description using a what/why/notes format with a Linear magic-word reference. |
 | `writing-clearly-and-concisely` | Apply Strunk's rules for clear prose and flag common AI writing patterns. |
 
 ## Uninstall

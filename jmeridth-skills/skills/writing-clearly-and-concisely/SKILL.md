@@ -49,6 +49,7 @@ William Strunk Jr.'s *The Elements of Style* (1918) teaches you to write clearly
 
 **Elementary Principles of Composition**:
 
+<!-- markdownlint-disable MD029 -->
 8. One paragraph per topic
 9. Begin paragraph with topic sentence
 10. **Use active voice**
@@ -60,6 +61,7 @@ William Strunk Jr.'s *The Elements of Style* (1918) teaches you to write clearly
 16. **Keep related words together**
 17. Keep to one tense in summaries
 18. **Place emphatic words at end of sentence**
+<!-- markdownlint-enable MD029 -->
 
 ### Reference Files
 

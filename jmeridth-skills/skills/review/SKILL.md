@@ -64,6 +64,8 @@ Scale the number of review agents (and which models) to the size and severity of
 - Use additive, curious framing - not corrective or prescriptive
 - For **first-time contributors**, lead with what was done well, be warm and specific about how to fix issues, and provide step-by-step guidance rather than terse criticism
 - For established contributors or teammates, be concise and direct
+- **Tone down superlatives**: "a good move" over "the right move". Softer assertions feel less prescriptive.
+- **Be precise with references**: make it obvious what "this" refers to, e.g. "this suggestion above" not just "this".
 
 ### AI attribution
 
@@ -99,6 +101,7 @@ Apply these to every summary and every comment. This is load-bearing: a review t
 - When specific code changes are needed, use GitHub suggestion blocks
 - One actionable point per comment - do not bundle multiple concerns
 - Each comment must begin with `:robot:` per the attribution rule above
+- **Always confirm before approving PRs** unless explicitly told to approve. Asking to see the approval message is not the same as giving the go-ahead.
 
 ### Line-level targeting (mandatory)
 
