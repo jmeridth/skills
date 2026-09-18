@@ -61,9 +61,10 @@ Scale the number of review agents (and which models) to the size and severity of
 
 ### Tone and voice
 
-- Use additive, curious framing - not corrective or prescriptive
 - For **first-time contributors**, lead with what was done well, be warm and specific about how to fix issues, and provide step-by-step guidance rather than terse criticism
 - For established contributors or teammates, be concise and direct
+- **Tone down superlatives**: "a good move" over "the right move". Softer assertions feel less prescriptive.
+- **Be precise with references**: make it obvious what "this" refers to, e.g. "this suggestion above" not just "this".
 
 ### AI attribution
 
@@ -73,32 +74,25 @@ Scale the number of review agents (and which models) to the size and severity of
 
 ### Writing style
 
-Apply these to every summary and every comment. This is load-bearing: a review that ignores it reads as bot noise regardless of how good the findings are. Run the pre-post checklist in **Drafting comments** before you show or post any draft.
+Apply these to every summary and every comment. This is load-bearing: a review that ignores it reads as bot noise regardless of how good the findings are.
 
+- **Run the `humanize-comments` skill on every drafted comment body.** Its three passes (shorten, make it sound human, make it non-prescriptive) are the prose rules for this skill. They are not restated here; load that skill and apply it.
+- **The `:robot:` attribution prefix is exempt from humanize.** It is a disclosure marker, not prose. Apply humanize to everything after it. Severity lives in the prefix tag only; never repeat severity language ("must fix", "blocker", "nit") in the body.
+- **Structure every comment body as claim, then evidence, then ask.** The claim states what goes wrong and its impact. The evidence is the mechanism, not the verification story (no "I traced X" or "I ran Y"; state the conclusion). The ask is a question or observation that leaves the decision with the author, or a suggestion block when the fix is mechanical.
 - **Keep the top-level summary short.** Lead with the verdict and any blockers. Positives are optional for established contributors; when included, cap them at 2-3 bullet points, never paragraphs.
-- **Structure every inline comment as claim, then evidence, then action.** The first sentence states the claim and its impact. Follow with the evidence. End with the requested action or a suggestion block.
-- **One idea per sentence.** If a sentence carries two ideas, split it.
-- **Use active voice and let verbs drive sentences.** Do not stack modifiers on an abstract noun and rest the sentence on "is".
-  - ✅ "The loop ends only because each attempt consumes clock time."
-  - ❌ "Loop termination relies on the clock advancing each iteration." - hides two actions behind two nouns
-  - ✅ "A queued writer now waits past its own deadline. That is a regression for the tail."
-  - ❌ "The mutex deadline-not-honored behavior is a real queued-tail regression." - stacks four modifiers on "behavior" and rests on "is"
-- **No em dashes and no exclamation points.** Restructure the sentence instead.
-- **Delete aggressively before posting.** Reread each drafted comment and cut every sentence that does not change what the author will do next.
 - For more prose guidance, see [Refactoring English](https://refactoringenglish.com/contents/) - especially "Get to the Point", "Respect the Reader's Mental Bandwidth", "Verbs Drive the Sentence", "Passive Voice Considered Harmful", "Delete Aggressively", and "Eliminate Ambiguity".
 
 ### Drafting comments
 
 - If findings warrant PR comments, draft them in my voice and **show me the draft before posting**
-- **Before you show or post any summary or comment, apply the Writing style rules above and run this checklist:**
-  - claim then evidence then action for a comment; verdict and blockers first for the summary
-  - one idea per sentence, active voice
-  - no em dashes, no exclamation points
-  - summary short, positives capped at 2-3 bullets
-  - delete every sentence that does not change what the author does next
+- **Before you show or post any summary or comment, run this checklist:**
+  - humanize pass 1 (shorten): one issue, 2-3 sentences, one connector per sentence, no evidence trail
+  - humanize pass 2 (human): no severity words, em dashes, headers, bullets, or file:line inside the body
+  - humanize pass 3 (non-prescriptive): the ask is a question or observation, not a directive
+  - claim, evidence, ask in that order; summary leads with verdict and blockers, positives capped at 2-3 bullets
+  - body starts with `:robot:` and the severity tag per the attribution rule
 - When specific code changes are needed, use GitHub suggestion blocks
-- One actionable point per comment - do not bundle multiple concerns
-- Each comment must begin with `:robot:` per the attribution rule above
+- **Always confirm before approving PRs** unless explicitly told to approve. Asking to see the approval message is not the same as giving the go-ahead.
 
 ### Line-level targeting (mandatory)
 
