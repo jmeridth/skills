@@ -52,11 +52,61 @@ Scale the number of review agents (and which models) to the size and severity of
 - Clearly label findings with verification status: **Verified** (confirmed by reading code or testing), **Observation** (plausible but depends on context outside the diff), or **Unverified** (could not confirm - include reasoning)
 - When a finding involves runtime behavior, write or run a test to confirm it rather than speculating
 
+### Convention rulings need merged precedent
+
+Never rule on a repository convention (version bump size, changelog kind, value style, file placement) from general principles or documented policy alone. Sample 3-5 recently merged PRs of the same change class first and follow demonstrated practice. When documented convention and merged practice conflict, surface the conflict as a question to the maintainers instead of ruling.
+
+Correct:
+
+```
+gh pr list --state merged --search "new value" -L 5   # then read how they bumped
+"The last four merged PRs adding values shipped as patches, so patch here too."
+```
+
+Wrong:
+
+```
+"A new value is a feature, so semver says minor."   # instinct, no precedent check
+```
+
+**Audit:** Any review comment that dictates a bump size, changelog kind, or structural convention must cite at least one merged PR as precedent. Flag rulings that cite only CONTRIBUTING or semver reasoning.
+
+### Version-target coordination
+
+Before requesting a version change on a chart or package, list every open PR against the same chart, assign explicit non-colliding targets in queue order (first to claim a number keeps it), and state the assignment in each PR. Re-verify the mainline's current version at posting time; never reuse a version read earlier in the session.
+
+Correct:
+
+```
+"Main is at 2.0.7 as of this comment. #4061 takes 2.0.8 (claimed first), this PR takes 2.0.9."
+```
+
+Wrong:
+
+```
+"Bump to 2.1.0."   # two other open PRs already target 2.1.0; churn for all three authors
+```
+
+**Audit:** When a review asks for a re-bump, check it names the current mainline version and accounts for sibling open PRs on the same chart.
+
+### Route around other reviewers
+
+If another maintainer has an unresolved thread or a standing changes-requested review on the PR, decide the relationship before writing anything, and say which mode applies:
+
+- **Complement**: cover only what their threads do not; reference theirs instead of restating.
+- **Defer**: they are actively driving (recent replies, iterating with the author); stay out unless asked.
+- **Coordinate**: your position conflicts with theirs; raise it with the maintainer directly, never as competing review verdicts on the PR.
+
+Never duplicate a concern another reviewer already raised, and never post a verdict that contradicts another maintainer's standing review without talking to them first.
+
+**Audit:** Before posting, list reviewers with unresolved threads or standing reviews. If the list is non-empty and the draft does not reference them, stop and re-check for overlap.
+
 ### What to focus on
 
 - **Correctness over style** - only report bugs, logic errors, security issues, race conditions, type mismatches, and missing edge cases. Do not flag style, formatting, naming conventions, or subjective preferences.
 - **Check whether the author has addressed existing review feedback** - read through all review threads and comments before reporting. Note unresolved threads.
 - **Check for unintended behavioral changes** - compare new code against the existing patterns in the same file or module
+- **Check template checklists with both marker styles** - PR checklist boxes appear as `- [x]` or `* [x]`; any scan matching only one style produces false "checklist missing" findings.
 - **Check docstring/comment accuracy** - verify that docstrings, comments, and commit messages accurately describe what the code actually does. Flag cases where stated behavior differs from implemented behavior.
 
 ### Tone and voice
