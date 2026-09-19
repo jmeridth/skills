@@ -8,6 +8,20 @@ argument-hint: [owner/repo]
 
 When invoked, follow this workflow automatically. Steps 1-5 are read-only. Never make changes, post comments, or launch reviews before the user approves in step 6.
 
+### 0. Sync local state first (mandatory)
+
+If a local clone of the target repository exists, pull the latest default branch before any assessment: `git pull upstream main` (or `origin`). Never compute version targets, conflict states, or "what changed" against a stale checkout, and never rely on repo state read earlier in the session.
+
+Correct:
+
+```bash
+git -C ~/code/repo checkout main -q && git -C ~/code/repo pull -q upstream main
+```
+
+Wrong: reusing a chart version or merge state fetched hours earlier; it produces pings to already-merged PRs and wrong re-bump targets.
+
+**Audit:** The first command of every reassessment run is the pull. If it is missing from the transcript, the run is invalid.
+
 ### 1. Resolve the repository
 
 - If an argument was given (`owner/repo` or a repo URL), use it and pass `--repo owner/repo` to every `gh` command below
@@ -44,7 +58,8 @@ PRs authored by the login from step 2:
 
 #### B. PRs I reviewed where the author has pushed updates
 
-- Candidates: `gh pr list --state open --search "reviewed-by:{login}" --json number,title,author` minus my own PRs
+- Candidates: `gh pr list --state open --search "reviewed-by:{login}"` **plus** `gh pr list --state open --search "commenter:{login}"`, minus my own PRs. Substantive comment-form feedback counts the same as a formal review; the author cannot tell the difference and neither should the triage.
+- For commenter-only candidates, compare my last comment time against the head commit time instead of a review `submittedAt`
 - For each, get my latest review time (`gh pr view {number} --json reviews`, filter to my login, take the newest `submittedAt`) and the head commit time (`gh pr view {number} --json commits`, take the last `committedDate`)
 - If the head commit is newer than my last review, the PR goes in bucket B - my review is stale and needs a re-review
 - If my last review was an approval and nothing else changed besides the new commits, still include it, but note it was previously approved
@@ -97,6 +112,7 @@ Ask the user which PRs to act on. Never proceed without an explicit choice. Then
 
 - Steps 1-5 are strictly read-only: no posting, no committing, no resolving threads
 - Always use the authenticated login from step 2, never assume the username
+- **Same-login provenance guard**: reviews and comments under the authenticated login may be the human's own work, not the agent's. If a review from that login is not in session context, treat it as human-authored: read it before acting, never post anything that contradicts or dismisses it, and hand clearance of the human's own changes-requested review back to the human
 - Always ignore resolved review threads when deciding whether a PR has new activity
 - Always compare timestamps in UTC as returned by the API; do not parse them into local time
 - If `gh` is not authenticated (`gh auth status` fails), stop and tell the user to run `gh auth login`
