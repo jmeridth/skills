@@ -112,6 +112,7 @@ Ask the user which PRs to act on. Never proceed without an explicit choice. Then
 
 - Steps 1-5 are strictly read-only: no posting, no committing, no resolving threads
 - Always use the authenticated login from step 2, never assume the username
+- **Fresh queries every invocation**: re-run every search and per-PR fetch in steps 3-4 on each run. Never carry forward bucket assignments, reviewed-by results, or "unchanged since" judgments from an earlier run in the same session; human activity between runs (an approval, a review, a push) is exactly what this workflow exists to catch. An `updatedAt` bump with no visible author push may be a review under the authenticated login, so fetch the PR's reviews before classifying it. Audit: a run whose transcript reuses a prior run's bucket table without re-running the step 4 searches is invalid
 - **Same-login provenance guard**: reviews and comments under the authenticated login may be the human's own work, not the agent's. If a review from that login is not in session context, treat it as human-authored: read it before acting, never post anything that contradicts or dismisses it, and hand clearance of the human's own changes-requested review back to the human
 - Always ignore resolved review threads when deciding whether a PR has new activity
 - Always compare timestamps in UTC as returned by the API; do not parse them into local time
