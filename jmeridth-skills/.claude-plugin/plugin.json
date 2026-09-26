@@ -1,7 +1,7 @@
 {
   "name": "jmeridth-skills",
   "description": "Personal collection of Claude Code skills for git workflow, GitHub Actions, Go development, code review, and productivity.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "author": {
     "name": "Jason Meridth",
     "email": "jmeridth@gmail.com",
