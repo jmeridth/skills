@@ -21,7 +21,7 @@ jobs:
       pull-requests: write # Mark PR as ready for review
       statuses: read     # Read commit statuses
     if: |
-      contains(github.event.pull_request.labels.*.name, 'Mark Ready When Ready') &&
+      contains(github.event.pull_request.labels.*.name, 'mark-ready-when-ready') &&
       github.event.pull_request.draft == true &&
       github.event.pull_request.head.repo.full_name == github.repository
     steps:
@@ -34,3 +34,4 @@ jobs:
         uses: kenyonj/mark-ready-when-ready@164bebf98862a24419165413a00bab80107b25ad # v1.3.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          label: mark-ready-when-ready
