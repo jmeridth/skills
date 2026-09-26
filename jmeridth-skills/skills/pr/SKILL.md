@@ -7,7 +7,7 @@ description: Create a good pull request. Gathers branch context, drafts a short 
 
 ### Process rules
 
-- **Never credit AI as an author or co-author.** No `Co-Authored-By` trailers for Claude in commits, no AI attribution in the PR title or the What/Why. The only place AI involvement appears is the `## Risk + AI role` section, where it is disclosed plainly.
+- **Never credit AI as an author or co-author.** No `Co-Authored-By` trailers for Claude in commits, no AI attribution in the PR title or the What/Why. The only place AI involvement appears is the `## AI role` section, where it is disclosed plainly.
 - Ensure the pull request title follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) specification.
 - **Always create PRs as draft** unless I explicitly say otherwise
 - **Always assign me (`jmeridth`) as the assignee** when opening PRs - this helps me track work in progress and follow up
@@ -55,12 +55,13 @@ Then the body, using the PR contract headings:
 
 - **## What/Why** -- Intent in 1-2 sentences. Combine the what and why into a single concise statement.
 - **## Proof it works** -- Tests passed, manual verification steps, screenshots, or logs. Do not list linting results here -- linting is a given. Focus on meaningful tests: unit tests, integration tests, manual verification, etc.
-- **## Risk + AI role** -- Risk tier (low/medium/high) and which parts were AI-generated (e.g., "high -- touches payments"). If no AI was involved, say so.
+- **## Risk** -- Risk tier (low/medium/high) and the reason (e.g., "high -- touches payments").
+- **## AI role** -- Which parts were AI-generated and which were human-written or human-reviewed, plus the AI model and version used (e.g., "Claude Opus 4.6"). If no AI was involved, say so.
 - **## Review focus** -- 1-2 specific areas where human reviewer input matters most (e.g., architecture, security, edge cases).
 
 Rules:
 
-- **Small PRs get a small description.** If the PR is a single small change, the whole body can be 3-4 lines total. Drop any heading that would only hold padding.
+- **Small PRs get a small description.** If the PR is a single small change, the whole body can be 3-4 lines total. Drop any heading that would only hold padding, except `## AI role`, which always appears.
 - Keep it concise. The diff speaks for itself.
 - Don't list every file changed.
 - Don't repeat the commit messages.

@@ -20,10 +20,11 @@ argument-hint: [issue-url | issue-id]
 
 - Create a meaningful commit message based on the current staged or unstaged changes.
 - Ensure it follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) specification.
-- Use four separate headings (with newlines after each):
+- Use five separate headings (with newlines after each):
   - **What/Why** -- Intent in 1-2 sentences. Combine the what and why into a single concise statement.
   - **Proof it works** -- Tests passed, manual verification steps, or logs.
-  - **Risk + AI role** -- Risk tier (low/medium/high) and which parts were AI-generated. Include the AI model and version used (e.g., "Claude Opus 4.6"). If no AI was involved, say so.
+  - **Risk** -- Risk tier (low/medium/high) and the reason.
+  - **AI role** -- Which parts were AI-generated and which were human-written or human-reviewed, plus the AI model and version used (e.g., "Claude Opus 4.6"). If no AI was involved, say so. Always include this heading.
   - **Review focus** -- 1-2 specific areas where human reviewer input matters most.
 - Avoid stating obvious facts or padding sections.
 - If the issue-url or issue-id ($ARGUMENTS) is provided, add `Relates to $ARGUMENTS` as the first line after the commit title to associate the commit to its issue. Use Linear MCP server or GitHub gh cli if available to get issue-url when issue-id is provided
