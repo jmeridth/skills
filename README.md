@@ -54,6 +54,14 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | `humanize-comments` | Rewrite review, doc, and issue comments so they read short, plain, and non-prescriptive. |
 | `writing-clearly-and-concisely` | Apply Strunk's rules for clear prose and flag common AI writing patterns. |
 
+## Releasing
+
+Claude Code caches plugins by version, so users only receive changes that come with a version bump.
+
+- Any PR that changes `jmeridth-skills/` or `.claude-plugin/marketplace.json` must bump `version` in `jmeridth-skills/.claude-plugin/plugin.json`. The `version-check` workflow enforces this.
+- The auto-labeler adds the `release` label to those PRs, and merging one publishes a release automatically.
+- CI, docs, and other repo changes never trigger a release.
+
 ## Uninstall
 
 ```bash
