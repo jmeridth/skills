@@ -9,46 +9,59 @@ template: |
 
 categories:
   - title: "💥 Breaking Changes"
-    labels:
-      - "breaking"
+    when:
+      labels:
+        - "breaking"
   - title: "🚀 Features"
-    labels:
-      - "feature"
-      - "enhancement"
+    when:
+      labels:
+        - "feature"
+        - "enhancement"
   - title: "🐛 Bug Fixes"
-    labels:
-      - "fix"
-      - "bugfix"
-      - "bug"
+    when:
+      labels:
+        - "fix"
+        - "bugfix"
+        - "bug"
   - title: "🧰 Maintenance"
-    labels:
-      - "infrastructure"
-      - "automation"
-      - "documentation"
-      - "dependencies"
-      - "github_actions"
-      - "maintenance"
-      - "revert"
+    when:
+      labels:
+        - "infrastructure"
+        - "automation"
+        - "documentation"
+        - "dependencies"
+        - "github_actions"
+        - "maintenance"
+        - "revert"
   - title: "🏎 Performance"
-    label: "performance"
+    when:
+      label: "performance"
+  # Version resolution: the highest matching increment wins.
+  - type: "version-resolver"
+    semver-increment: "major"
+    when:
+      labels:
+        - "breaking"
+        - "major"
+  - type: "version-resolver"
+    semver-increment: "minor"
+    when:
+      labels:
+        - "enhancement"
+        - "feature"
+        - "minor"
+  - type: "version-resolver"
+    semver-increment: "patch"
+    when:
+      labels:
+        - "documentation"
+        - "fix"
+        - "maintenance"
+        - "patch"
+  # Fallback when no other version-resolver category matches
+  - type: "version-resolver"
+    semver-increment: "patch"
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
-version-resolver:
-  major:
-    labels:
-      - "breaking"
-      - "major"
-  minor:
-    labels:
-      - "enhancement"
-      - "feature"
-      - "minor"
-  patch:
-    labels:
-      - "documentation"
-      - "fix"
-      - "maintenance"
-      - "patch"
-  default: patch
 autolabeler:
   - label: "automation"
     title:
@@ -82,3 +95,8 @@ autolabeler:
       - ".gitattributes"
       - ".gitmodules/**/*"
       - "LICENSE"
+  # Any change to the installable plugin is released on merge
+  - label: "release"
+    files:
+      - "jmeridth-skills/**"
+      - ".claude-plugin/marketplace.json"

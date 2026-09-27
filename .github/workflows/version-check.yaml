@@ -1,0 +1,62 @@
+---
+name: version-check
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Clone the repository and diff against the base ref
+    env:
+      PLUGIN_DIR: jmeridth-skills
+      # Require .claude-plugin/marketplace.json metadata.version to equal plugin.json version
+      MATCH_MARKETPLACE_VERSION: "false"
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Require a version bump when the plugin changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          plugin_json="$PLUGIN_DIR/.claude-plugin/plugin.json"
+          marketplace_json=".claude-plugin/marketplace.json"
+
+          head_version=$(jq -r .version "$plugin_json")
+          market_version=$(jq -r .metadata.version "$marketplace_json")
+          if [ "$MATCH_MARKETPLACE_VERSION" = "true" ] && [ "$head_version" != "$market_version" ]; then
+            echo "::error file=$marketplace_json::metadata.version ($market_version) must match $plugin_json version ($head_version)"
+            exit 1
+          fi
+
+          if ! git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+              | grep -qE "^($PLUGIN_DIR/|\.claude-plugin/marketplace\.json$)"; then
+            echo "No plugin changes; no version bump required."
+            exit 0
+          fi
+
+          base_version=$(git show "$BASE_SHA:$plugin_json" | jq -r .version)
+          highest=$(printf '%s\n%s\n' "$base_version" "$head_version" | sort -V | tail -n1)
+          if [ "$head_version" = "$base_version" ] || [ "$highest" != "$head_version" ]; then
+            echo "::error file=$plugin_json::Plugin files changed, so bump version above $base_version (currently $head_version) in $plugin_json"
+            exit 1
+          fi
+
+          echo "Version bumped: $base_version -> $head_version"

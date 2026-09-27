@@ -6,6 +6,10 @@ on:
   pull_request_target:
     types: [closed]
     branches: [main]
+    # Release only when the installable plugin changes; CI and docs merges never release
+    paths:
+      - "jmeridth-skills/**"
+      - ".claude-plugin/marketplace.json"
 
 permissions: {}
 
@@ -24,7 +28,8 @@ jobs:
       # Configuration file for release-drafter, relative to .github/
       release-config-name: release-drafter.yml
       publish: true
-      # Only release when the 'release' label is on the merged PR
+      # Only release when the 'release' label is on the merged PR. The
+      # auto-labeler applies it to any PR that touches the plugin.
       release-only-with-label: true
       # plugin.json is the source of truth for the release version
       version-file: jmeridth-skills/.claude-plugin/plugin.json
