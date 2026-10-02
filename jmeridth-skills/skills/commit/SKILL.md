@@ -27,4 +27,16 @@ argument-hint: [issue-url | issue-id]
   - **AI role** -- Which parts were AI-generated and which were human-written or human-reviewed, plus the AI model and version used (e.g., "Claude Opus 4.6"). If no AI was involved, say so. Always include this heading.
   - **Review focus** -- 1-2 specific areas where human reviewer input matters most.
 - Avoid stating obvious facts or padding sections.
-- If the issue-url or issue-id ($ARGUMENTS) is provided, add `Relates to $ARGUMENTS` as the first line after the commit title to associate the commit to its issue. Use Linear MCP server or GitHub gh cli if available to get issue-url when issue-id is provided
+
+## Issue reference
+
+- Find the issue: use the issue-url or issue-id in `$ARGUMENTS`, or look for a GitHub issue number (`#123`) or Linear key (e.g., `ENG-123`) in the branch name. When only an id is given, fetch the issue with the Linear MCP server or `gh issue view` to confirm its scope.
+- If no issue applies, add no reference line.
+- Put the reference on the first line after the commit title.
+- **Deduce the keyword yourself** - do not ask. Compare the issue against the commit's full diff:
+  - The commit fully resolves what the issue asks for -> use `Fixes` (bugs) or `Closes` (features/tasks).
+  - The commit is partial progress, or only touches the issue's topic -> use `Relates to` for GitHub issues or `Part of` for Linear issues.
+- **`Relates to` / `Part of` is not the safe default.** Picking it "to be safe" when the commit resolves the issue leaves the issue open, which is worse than the reverse mistake.
+- GitHub issues in another repository use the full form (`Fixes owner/repo#<n>`).
+- Reference Linear issues by bare key after the keyword (`Fixes ENG-123`, `Part of ENG-123`). Never as a markdown link or full URL. Never in the commit title.
+- **No closing keywords in prose**: Never write GitHub closing keywords (`fix`/`fixes`/`fixed`, `close`/`closes`/`closed`, `resolve`/`resolves`/`resolved`, with or without a colon) directly before an issue number in the body. GitHub treats `fixes #123` anywhere in the message as a close once the commit reaches the default branch. Keep these keywords on the reference line. When only mentioning an issue in prose, write "see #123".
