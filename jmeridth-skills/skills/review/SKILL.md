@@ -35,14 +35,14 @@ Scale the number of review agents (and which models) to the size and severity of
 | Tier | When | Agents (models) |
 |------|------|-----------------|
 | **Docs/trivial** | Docs, comments, config, or other non-logic changes only | 1 agent: **Sonnet** |
-| **Small** | ≤ 150 changed lines, low risk, no security-sensitive paths | 1 agent: **Fable** |
+| **Small** | ≤ 150 changed lines, low risk, no security-sensitive paths | 1 agent: **Opus** |
 | **Medium** | ~150–400 changed lines, **or** any security-sensitive path | 2 agents: **Opus + Fable** |
 | **Large / critical** | > 400 changed lines, **or** high-severity / security-critical surface | 4 agents: **Opus, Sonnet, Haiku, Fable** |
 
 - **Severity overrides size.** Risk bumps the tier **up** regardless of line count: treat auth, crypto/signing, token or secret handling, HTTP handlers, `exec`, SQL, or access-control changes as **at least Medium** even for a tiny diff. When unsure, round up a tier.
-- **Fable is always included** except the Docs/trivial tier (which is Sonnet only).
+- **Opus is the default single reviewer.** Fable runs only in tiers with 2+ agents (Medium and Large/critical). Single-agent tiers use Opus (Small) or Sonnet (Docs/trivial).
 - **For any PR ≤ 150 changed lines, report the size and confirm the tier with me before launching agents.**
-- **Select models by family alias, not version.** Pass `opus`, `sonnet`, `haiku`, or `fable` as the agent's `model`. Each alias resolves to the latest model in that family, so new releases apply without editing this skill.
+- **Select models by family alias, not version.** Pass `opus`, `sonnet`, `haiku`, or `fable` as the agent's `model`. Each alias resolves to the latest model in that family (`opus` is Opus 5.5 or later), so new releases apply without editing this skill.
 - Launch the chosen agents in parallel, each on a different model. Instruct each agent to state its exact model ID at the top of its output. **Always display the exact model IDs that ran**, not just the family names.
 - Synthesize findings across all models — surface only issues that multiple models flag or that you independently verify. Present a unified, deduplicated report organized by severity.
 
