@@ -46,12 +46,15 @@ Scale the number of review agents (and which models) to the size and severity of
 - Launch the chosen agents in parallel, each on a different model. Instruct each agent to state its exact model ID at the top of its output. **Always display the exact model IDs that ran**, not just the family names.
 - Synthesize findings across all models — surface only issues that multiple models flag or that you independently verify. Present a unified, deduplicated report organized by severity.
 
-### Verification standard
+### What earns a finding
 
-- **Every finding must be verified before reporting it.** Do not report potential issues based on assumptions alone.
-- Verify by reading the actual source files, checking call sites, tracing data flow, or running tests/experiments
-- Clearly label findings with verification status: **Verified** (confirmed by reading code or testing), **Observation** (plausible but depends on context outside the diff), or **Unverified** (could not confirm - include reasoning)
-- When a finding involves runtime behavior, write or run a test to confirm it rather than speculating
+Report a finding when the author needs to know something the diff doesn't tell them. Ask three questions of every candidate before it goes in the report:
+
+1. **Is it true?** Verify it by reading the source, checking call sites, tracing data flow, or running a test. When it involves runtime behavior, write or run a test rather than speculating.
+2. **Has anyone already said it?** Check existing threads, review bodies, and other reviewers. If so, drop it or reference theirs.
+3. **Would the author ship something wrong without it?** If not, drop it.
+
+Label each reported finding **Verified** (confirmed by code or test) or **Observation** (plausible, but depends on context outside the diff). Anything you could not confirm is not a finding. List it under "Couldn't confirm" in the summary with your reasoning.
 
 ### Convention rulings need merged precedent
 
@@ -108,7 +111,10 @@ Never duplicate a concern another reviewer already raised, and never post a verd
 - **Check whether the author has addressed existing review feedback** - read through all review threads and comments before reporting. Note unresolved threads.
 - **Check for unintended behavioral changes** - compare new code against the existing patterns in the same file or module
 - **Check template checklists with both marker styles** - PR checklist boxes appear as `- [x]` or `* [x]`; any scan matching only one style produces false "checklist missing" findings.
-- **Check docstring/comment accuracy** - verify that docstrings, comments, and commit messages accurately describe what the code actually does. Flag cases where stated behavior differs from implemented behavior.
+- **Check docstring/comment accuracy** - verify that docstrings, comments, and commit messages describe what the code actually does. Comment findings fall into two classes:
+  - **Wrong, stale, or misleading** is a correctness defect. Give it a real severity. People and agents trust comments over code, so a false one is how the next bug gets past review.
+  - **Redundant, padded, or restating the code** is style. Raise it once, as `low, non-blocking`, never per occurrence.
+  - A comment that predates the change is out of scope unless this diff made it false.
 
 ### Tone and voice
 
@@ -135,14 +141,9 @@ Apply these to every summary and every comment. This is load-bearing: a review t
 
 ### Drafting comments
 
-- If findings warrant PR comments, draft them in my voice and **show me the draft before posting**
-- **Before you show or post any summary or comment, run this checklist:**
-  - humanize pass 1 (shorten): one issue, 2-3 sentences, one connector per sentence, no evidence trail
-  - humanize pass 2 (human): no severity words, em dashes, headers, bullets, or file:line inside the body
-  - humanize pass 3 (non-prescriptive): the ask is a question or observation, not a directive
-  - claim, evidence, ask in that order; summary leads with verdict and blockers, positives capped at 2-3 bullets
-  - body starts with `:robot:` and the severity tag per the attribution rule
+- If findings warrant PR comments, draft them in my voice and **show me the draft before posting**. Apply the Writing style rules above and the attribution prefix before showing anything.
 - When specific code changes are needed, use GitHub suggestion blocks
+- When a suggestion adds or edits a code comment, write it for a reader who never saw the diff. No "now", "instead of", "for now", or "new". Phrase hazards counterfactually ("a mutex here would reintroduce the race", not "reintroduces").
 - **Always confirm before approving PRs** unless explicitly told to approve. Asking to see the approval message is not the same as giving the go-ahead.
 
 ### Line-level targeting (mandatory)
