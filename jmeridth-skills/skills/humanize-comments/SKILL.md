@@ -12,7 +12,7 @@ Comments land better when they sound like a colleague, not a report generator. A
 Test: could the author act on this with half the words?
 
 - One issue per comment. If a draft covers two, split it or cut one.
-- 2-3 short sentences, not 4: one for mechanism+impact, one for the ask. If you're still at 4 sentences, you're explaining, not stating — cut one.
+- Length is the outcome, not the target. Most findings land in 2-3 short sentences: one for mechanism+impact, one for the ask. At 4+, check whether you're explaining rather than stating, and cut what the author doesn't need. Don't cut the mechanism that makes the finding convincing.
 - One connector per sentence. If a sentence needs two of "which / so / because / and", split it or drop a clause. This is what makes a comment feel convoluted even when it's technically short.
 - Cut background the author doesn't need to act. Cut anything that restates what the code or doc already shows.
 - Cut the evidence trail: no "I tested this against X", "verified by grepping Y", "I compared Z". State the conclusion only. If the author wants proof, they'll ask.

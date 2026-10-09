@@ -25,6 +25,8 @@ For each unresolved comment:
   - **Fix**: The comment identifies a real issue or a worthwhile improvement — make the code change
   - **Decline**: The comment is incorrect, a style preference, or about testing framework internals — explain why
   - **Out of scope**: The comment requests a change beyond the scope of this PR — decline the change and, if the suggestion has merit as a follow-up, suggest to the user (not the reviewer) that they file an issue to track it
+- **"No caller hits it today" is not a reason to decline.** A claim like that justifies dropping a guard, and the next caller falsifies it. Push back on the same reasoning when a reviewer's suggestion depends on it. A claim that justifies *keeping* a constraint ("callers hold this across a network call, so it stays lock-free") is fine, because going stale only over-constrains the code.
+- **A "why is this like this?" question usually means a comment is missing.** If the answer is a constraint or invariant the code can't express, classify it as **Fix** and add the inline comment, in addition to replying. History (what changed, what it replaced) goes in the commit message, not the code.
 - Present a summary table of all comments with the proposed action before proceeding
 
 ### 3. Wait for approval
@@ -35,6 +37,7 @@ For each unresolved comment:
 ### 4. Implement fixes
 
 - Make all approved code changes on the current branch
+- Never write review history into code. A comment like `// now uses X instead of Y per review` describes the diff, and nobody reading the file later sees the diff. Drop "now", "instead of", "for now", and "new". Keep only the constraint, in the present tense.
 - Run tests and linting to verify nothing is broken
 - Commit with `--signoff` using a descriptive message that references the PR comments
 - Push to the branch
@@ -61,7 +64,7 @@ For each comment, determine if it is a **review thread comment** (inline code co
 **If out of scope:**
 
 - Reply thanking the reviewer and explaining that the suggestion is outside the scope of this PR
-- If the suggestion has merit, mention that a follow-up issue will be filed to track it
+- If the suggestion has merit and the user filed an issue, link it. If no issue exists, say so plainly. Never promise "a follow-up issue will be filed", since nothing enforces that promise
 - If it is a review thread comment, resolve the thread
 - If it is a top-level issue comment, quote the original message in the reply
 - In the summary table shown to the user, flag out-of-scope items that warrant a follow-up issue so the user can decide whether to file one
