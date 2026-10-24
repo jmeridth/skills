@@ -8,6 +8,20 @@ argument-hint: [pr-url | pr-number | branch]
 
 When asked to review a PR (by link or from current context) or the current feature branch, follow this workflow automatically:
 
+### Run each review in an orchestrator subagent
+
+Delegate every review to its own orchestrator subagent so the main context stays small and I can ask for more reviews in the same session. The main context never reads the diff, existing threads, or source files for a review it delegated.
+
+- **One orchestrator per PR or branch.** Spawn it with the Agent tool (`general-purpose`, `model: opus`). When I ask for several reviews, spawn the orchestrators in a single message so they run concurrently.
+- **Brief it as a peer.** Pass the PR URL or branch, this skill's file path, and an instruction to run every section below except "Tone and voice", "AI attribution", "Writing style", "Drafting comments", and "Line-level targeting". Those stay in the main context.
+- **The orchestrator runs the workflow end to end:** sync to the head SHA, read existing threads, answer "should we do this?", size the diff, pick the tier, spawn one reviewer subagent per model in that tier (in parallel), verify and deduplicate their findings, and return the report.
+- **The orchestrator cannot ask me questions.** At each gate below, it stops and returns `status: needs-decision` with its proposed answer. The main context relays the question, then continues the same orchestrator with `SendMessage`.
+  - "Should we do this?" answered "no" or "unclear".
+  - Tier confirmation for any PR ≤ 150 changed lines.
+- **Return a structured report, not prose.** Fields: `status` (`done` or `needs-decision`), head SHA, tier and exact model IDs that ran, the "should we do this?" answer, other reviewers and their mode (complement, defer, coordinate), and findings. Each finding carries file, new-side line derived from the diff, severity, `Verified` or `Observation`, claim, and evidence. Couldn't-confirm items go in their own list.
+- **Fallback.** If the orchestrator has no Agent tool and cannot spawn reviewers, it says so in the report and runs the passes itself in sequence. Tell me the review had less model diversity than the tier calls for.
+- **Main context keeps the rest.** It humanizes comments, shows me drafts, and posts after I approve. Subagents never draft in my voice, post, approve, or resolve threads.
+
 ### Pull latest first (mandatory)
 
 Before assessing anything or launching agents, sync to the PR's current state. A stale checkout produces findings against code the author has already changed, wasting a full multi-model pass and risking re-opening things that are already fixed.
@@ -43,7 +57,7 @@ Scale the number of review agents (and which models) to the size and severity of
 - **Opus is the default single reviewer.** Fable runs only in tiers with 2+ agents (Medium and Large/critical). Single-agent tiers use Opus (Small) or Sonnet (Docs/trivial).
 - **For any PR ≤ 150 changed lines, report the size and confirm the tier with me before launching agents.**
 - **Select models by family alias, not version.** Pass `opus`, `sonnet`, `haiku`, or `fable` as the agent's `model`. Each alias resolves to the latest model in that family (`opus` is Opus 5.5 or later), so new releases apply without editing this skill.
-- Launch the chosen agents in parallel, each on a different model. Instruct each agent to state its exact model ID at the top of its output. **Always display the exact model IDs that ran**, not just the family names.
+- The orchestrator launches the chosen reviewer subagents in parallel, each on a different model. Instruct each agent to state its exact model ID at the top of its output. **Always display the exact model IDs that ran**, not just the family names.
 - Synthesize findings across all models — surface only issues that multiple models flag or that you independently verify. Present a unified, deduplicated report organized by severity.
 
 ### What earns a finding
