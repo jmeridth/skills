@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Stub gh for tests. See tests/reassess/helpers.bash.
+set -euo pipefail
+
+dir="${GH_STUB_DIR:?GH_STUB_DIR not set}"
+echo "$*" >>"$dir/calls.log"
+
+if [[ -n "${GH_STUB_FAIL_MATCH:-}" && "$*" == *"$GH_STUB_FAIL_MATCH"* ]]; then
+  echo "HTTP 403: API rate limit exceeded" >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  [[ -z "${GH_STUB_UNAUTH:-}" ]] || exit 1
+  exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+  cat "$dir/user"
+  exit 0
+fi
+
+base="${1:-}_${2:-}"
+# Most specific fixture: any later non-flag argument, slugged.
+for arg in "${@:3}"; do
+  [[ "$arg" == -* ]] && continue
+  slug="${arg//[^a-zA-Z0-9]/_}"
+  if [[ -f "$dir/${base}__${slug}.json" ]]; then
+    cat "$dir/${base}__${slug}.json"
+    exit 0
+  fi
+done
+
+if [[ -f "$dir/$base.json" ]]; then
+  cat "$dir/$base.json"
+else
+  echo "[]"
+fi
