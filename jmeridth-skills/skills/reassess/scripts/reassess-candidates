@@ -21,8 +21,68 @@ Exit codes: 1 generic, 2 config error, 3 rate limit, 4 gh not authenticated.
 USAGE
 }
 
+config_schema() {
+  cat <<'SCHEMA'
+Expected config (~/.config/jmeridth-skills/config.yaml):
+
+default_clone_path: ~/code        # optional
+monitor:                          # required, non-empty
+  - org: my-org                   # every repo in the org
+    exclude: [legacy, sandbox]    # optional repo names to skip
+  - repo: other-org/one-repo      # a single owner/name
+    path: ~/work/one-repo         # optional clone path override
+SCHEMA
+}
+
+config_fail() {
+  echo "config error: $1" >&2
+  config_schema >&2
+  exit "$EX_CONFIG"
+}
+
+require_yq() {
+  local version
+  version=$(yq --version 2>&1 || true)
+  if [[ "$version" != *mikefarah* || "$version" != *"version v4"* ]]; then
+    config_fail "needs mikefarah yq v4 (found: ${version:-no yq on PATH})"
+  fi
+}
+
+# load_config <path>: print the validated, normalized config as JSON.
+load_config() {
+  local path="$1" raw out
+  [[ -f "$path" ]] || config_fail "file not found: $path"
+  require_yq
+  raw=$(yq -o=json '.' "$path" 2>&1) || config_fail "invalid YAML in $path"
+  # shellcheck disable=SC2016 # $home and $ex are jq variables
+  out=$(jq --arg home "$HOME" '
+    def expand: if . == null then null else sub("^~"; $home) | sub("/+$"; "") end;
+    def bad_name: type != "string" or . == "" or contains("/");
+    if (.monitor | type) != "array" or (.monitor | length) == 0
+    then error("monitor must be a non-empty list") else . end
+    | {
+        default_clone_path: (.default_clone_path | expand),
+        monitor: [.monitor[] |
+          if has("org") and has("repo") then error("entry has both org and repo")
+          elif has("org") then
+            (if (.org | bad_name) then error("org must be a name without a slash") else . end)
+            | (.exclude // []) as $ex
+            | (if ($ex | type) != "array" or ($ex | any(bad_name))
+               then error("exclude must be a list of repo names") else . end)
+            | {kind: "org", org: .org, exclude: $ex}
+          elif has("repo") then
+            (if (.repo | type) != "string" or (.repo | split("/") | length) != 2
+                or (.repo | split("/") | any(. == ""))
+             then error("repo must be owner/name") else . end)
+            | {kind: "repo", repo: .repo, path: (.path | expand)}
+          else error("entry needs org or repo") end
+        ]
+      }' <<<"$raw" 2>&1) || config_fail "${out#jq: error*: }"
+  printf '%s\n' "$out"
+}
+
 main() {
-  local repo="" config="" dump_config=0
+  local repo="" config="" dump_config=0 cfg
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -48,7 +108,14 @@ main() {
     usage >&2
     return "$EX_GENERIC"
   fi
-  : "$dump_config"
+
+  if [[ -n "$config" ]]; then
+    cfg=$(load_config "$config")
+    if ((dump_config)); then
+      printf '%s\n' "$cfg"
+      return 0
+    fi
+  fi
 }
 
 main "$@"
