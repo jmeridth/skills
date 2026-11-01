@@ -6,7 +6,7 @@ dir="${GH_STUB_DIR:?GH_STUB_DIR not set}"
 echo "$*" >>"$dir/calls.log"
 
 if [[ -n "${GH_STUB_FAIL_MATCH:-}" && "$*" == *"$GH_STUB_FAIL_MATCH"* ]]; then
-  echo "HTTP 403: API rate limit exceeded" >&2
+  echo "${GH_STUB_FAIL_MSG:-HTTP 403: API rate limit exceeded}" >&2
   exit 1
 fi
 

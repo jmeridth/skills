@@ -208,3 +208,32 @@ monitor:
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+@test "rate limit on the login lookup exits 3" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  GH_STUB_FAIL_MATCH="api user" prs
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}
+
+@test "HTTP 429 exits 3" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  GH_STUB_FAIL_MATCH="search prs" GH_STUB_FAIL_MSG="HTTP 429: Too Many Requests" prs
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+}
+
+@test "secondary rate limit exits 3" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  GH_STUB_FAIL_MATCH="search prs" GH_STUB_FAIL_MSG="You have exceeded a secondary rate limit" prs
+  [ "$status" -eq 3 ]
+}

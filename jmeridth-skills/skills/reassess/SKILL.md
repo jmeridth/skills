@@ -71,7 +71,7 @@ What the buckets mean (the script applies these; use them to explain, not to rec
 
 - **Same-login provenance guard**: reviews and comments under the authenticated login may be the human's own work, not the agent's. If a review from that login is not in session context, treat it as human-authored: read it before acting, never post anything that contradicts or dismisses it, and hand clearance of the human's own changes-requested review back to the human
 - **Bot reviews**: when `reasons` mentions a bot review with inline comments, read those comments and say whether they are actionable
-- **Stale local state**: for every `sync` entry with `status: skipped`, say why (no clone, dirty tree, not on the default branch, diverged, pull failed). Never compute version targets, conflict states, or "what changed" from a checkout the script did not sync
+- **Stale local state**: for every `sync` entry with `status: skipped`, say why (no clone, dirty tree, not on the default branch, diverged, ahead of remote, pull failed). Never compute version targets, conflict states, or "what changed" from a checkout the script did not sync
 - **Truncation**: if `truncated` is not empty, say the listed searches hit the 1000-result cap and the report may be incomplete
 - **Checks**: if `reasons` says required checks were unavailable, say the draft-candidate check was skipped for that PR
 

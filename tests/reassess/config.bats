@@ -107,3 +107,89 @@ monitor:
   [ "$status" -eq 2 ]
   [[ "$output" == *"mikefarah"* ]]
 }
+
+@test "tilde alone expands to home" {
+  write_config '
+default_clone_path: "~"
+monitor:
+  - org: o
+'
+  dump
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .default_clone_path <<<"$output")" = "$HOME" ]
+}
+
+@test "other-user tilde path exits 2" {
+  write_config '
+default_clone_path: ~bob/code
+monitor:
+  - org: o
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"absolute"* ]]
+}
+
+@test "root path exits 2" {
+  write_config '
+default_clone_path: /
+monitor:
+  - org: o
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"/"* ]]
+  [[ "$output" == *"root"* ]]
+}
+
+@test "relative path exits 2" {
+  write_config '
+monitor:
+  - repo: o/r
+    path: code/r
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"absolute"* ]]
+}
+
+@test "a string entry gets a clear error, not a jq message" {
+  write_config '
+monitor:
+  - my-org
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"mapping"* ]]
+  [[ "$output" != *"Cannot"* ]]
+}
+
+@test "a non-string path gets a clear error" {
+  write_config '
+monitor:
+  - repo: o/r
+    path: 5
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"path must be a string"* ]]
+}
+
+@test "a non-string default_clone_path gets a clear error" {
+  write_config '
+default_clone_path: [a, b]
+monitor:
+  - org: o
+'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"default_clone_path must be a string"* ]]
+}
+
+@test "a config that is a list gets a clear error" {
+  write_config '- org: o'
+  dump
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"mapping"* ]]
+  [[ "$output" != *"Cannot"* ]]
+}

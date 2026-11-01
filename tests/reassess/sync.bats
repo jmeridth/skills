@@ -127,3 +127,69 @@ monitor:
   [ "$(sync_field status)" = "skipped" ]
   [ "$(sync_field reason)" = "no clone" ]
 }
+
+@test "single-repo mode from a clone subdirectory syncs the clone" {
+  mkdir -p "$CLONE/sub/dir"
+  remote_commit two
+  cd "$CLONE/sub/dir"
+  run --separate-stderr "$SCRIPT" o/r
+  [ "$(sync_field status)" = "synced" ]
+  [ "$(sync_field clone_path)" = "$(cd "$CLONE" && pwd -P)" ]
+}
+
+@test "local commits ahead of the remote are reported, not called synced" {
+  echo local >>"$CLONE/f"
+  git -C "$CLONE" commit -q -am local
+  refresh
+  [ "$(sync_field status)" = "skipped" ]
+  [ "$(sync_field reason)" = "ahead of remote" ]
+}
+
+@test "an up-to-date clone is synced" {
+  refresh
+  [ "$(sync_field status)" = "synced" ]
+}
+
+@test "the fast-forward does not run post-merge hooks" {
+  printf '#!/bin/sh\ntouch "%s/hook-ran"\n' "$BATS_TEST_TMPDIR" >"$CLONE/.git/hooks/post-merge"
+  chmod +x "$CLONE/.git/hooks/post-merge"
+  remote_commit two
+  refresh
+  [ "$(sync_field status)" = "synced" ]
+  [ "$(git -C "$CLONE" rev-parse HEAD)" = "$(git -C "$SEED" rev-parse HEAD)" ]
+  [ ! -e "$BATS_TEST_TMPDIR/hook-ran" ]
+}
+
+# git_spy: put a git wrapper first on PATH that logs GIT_SSH_COMMAND per call.
+git_spy() {
+  local real
+  real=$(command -v git)
+  mkdir -p "$BATS_TEST_TMPDIR/gitbin"
+  # shellcheck disable=SC2016 # the wrapper expands ${GIT_SSH_COMMAND} when it runs
+  printf '#!/bin/sh\necho "ssh=${GIT_SSH_COMMAND-unset}" >>"%s/git.log"\nexec "%s" "$@"\n' \
+    "$BATS_TEST_TMPDIR" "$real" >"$BATS_TEST_TMPDIR/gitbin/git"
+  chmod +x "$BATS_TEST_TMPDIR/gitbin/git"
+  PATH="$BATS_TEST_TMPDIR/gitbin:$PATH"
+}
+
+@test "fetch runs ssh in batch mode so it cannot hang on a prompt" {
+  git_spy
+  unset GIT_SSH_COMMAND
+  refresh
+  grep -q 'ssh=ssh -o BatchMode=yes' "$BATS_TEST_TMPDIR/git.log"
+}
+
+@test "a user-set GIT_SSH_COMMAND is left alone" {
+  git_spy
+  GIT_SSH_COMMAND="ssh -i /tmp/key" refresh
+  grep -q 'ssh=ssh -i /tmp/key' "$BATS_TEST_TMPDIR/git.log"
+  run ! grep -q BatchMode "$BATS_TEST_TMPDIR/git.log"
+}
+
+@test "a repo-level core.sshCommand is left alone" {
+  git -C "$CLONE" config core.sshCommand "ssh -v"
+  git_spy
+  unset GIT_SSH_COMMAND
+  refresh
+  run ! grep -q BatchMode "$BATS_TEST_TMPDIR/git.log"
+}

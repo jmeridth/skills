@@ -25,7 +25,7 @@ config_schema() {
   cat <<'SCHEMA'
 Expected config (~/.config/jmeridth-skills/config.yaml):
 
-default_clone_path: ~/code        # optional
+default_clone_path: ~/code        # optional; paths are absolute or start with ~/
 monitor:                          # required, non-empty
   - org: my-org                   # every repo in the org
     exclude: [legacy, sandbox]    # optional repo names to skip
@@ -56,14 +56,24 @@ load_config() {
   raw=$(yq -o=json '.' "$path" 2>&1) || config_fail "invalid YAML in $path"
   # shellcheck disable=SC2016 # $home and $ex are jq variables
   out=$(jq --arg home "$HOME" '
-    def expand: if . == null then null else sub("^~"; $home) | sub("/+$"; "") end;
+    def path_of($what):
+      if . == null then null
+      elif type != "string" then error($what + " must be a string")
+      else (sub("^~(?=/|$)"; $home) | sub("/+$"; "")) as $p
+        | if $p == "" then error($what + " cannot be the filesystem root")
+          elif ($p | startswith("/") | not)
+          then error($what + " must be an absolute path or start with ~/")
+          else $p end
+      end;
     def bad_name: type != "string" or . == "" or contains("/");
-    if (.monitor | type) != "array" or (.monitor | length) == 0
-    then error("monitor must be a non-empty list") else . end
+    if type != "object" then error("config must be a mapping (key: value pairs)") else . end
+    | if (.monitor | type) != "array" or (.monitor | length) == 0
+      then error("monitor must be a non-empty list") else . end
     | {
-        default_clone_path: (.default_clone_path | expand),
+        default_clone_path: (.default_clone_path | path_of("default_clone_path")),
         monitor: [.monitor[] |
-          if has("org") and has("repo") then error("entry has both org and repo")
+          if type != "object" then error("each monitor entry must be a mapping with org or repo")
+          elif has("org") and has("repo") then error("entry has both org and repo")
           elif has("org") then
             (if (.org | bad_name) then error("org must be a name without a slash") else . end)
             | (.exclude // []) as $ex
@@ -74,7 +84,7 @@ load_config() {
             (if (.repo | type) != "string" or (.repo | split("/") | length) != 2
                 or (.repo | split("/") | any(. == ""))
              then error("repo must be owner/name") else . end)
-            | {kind: "repo", repo: .repo, path: (.path | expand)}
+            | {kind: "repo", repo: .repo, path: (.path | path_of("path"))}
           else error("entry needs org or repo") end
         ]
       }' <<<"$raw" 2>&1) || config_fail "${out#jq: error*: }"
@@ -88,6 +98,8 @@ require_auth() {
   fi
 }
 
+RATE_LIMIT_RE='rate limit|HTTP 429|too many requests'
+
 # run_gh <gh args...>: print gh's stdout. On failure print its stderr and
 # return 3 for a rate limit, else 1.
 run_gh() {
@@ -98,7 +110,7 @@ run_gh() {
     printf '%s\n' "$out"
     return 0
   fi
-  if grep -qi 'rate limit' "$err"; then
+  if grep -Eqi "$RATE_LIMIT_RE" "$err"; then
     echo "rate limited: gh $*" >&2
     rm -f "$err"
     return "$EX_RATE_LIMIT"
@@ -211,7 +223,7 @@ classify_pr() {
       checks=$(jq -c '{state: "ok", items: .}' <<<"$out")
     elif grep -qi 'no required checks reported' "$errf"; then
       checks='{"state": "ok", "items": []}'
-    elif grep -qi 'rate limit' "$errf"; then
+    elif grep -Eqi "$RATE_LIMIT_RE" "$errf"; then
       rm -f "$errf"
       echo "rate limited: gh pr checks $number" >&2
       return "$EX_RATE_LIMIT"
@@ -328,6 +340,17 @@ sync_row() {
       clone_path: (if $path == "" then null else $path end)}'
 }
 
+# fetch_batch <path> <remote>: fetch without prompts. ssh runs in batch mode so
+# a host-key or passphrase prompt cannot hang the run, unless the user already
+# chose an ssh command through GIT_SSH_COMMAND or core.sshCommand.
+fetch_batch() {
+  if [[ -z "${GIT_SSH_COMMAND:-}" && -z "$(git -C "$1" config --get core.sshCommand)" ]]; then
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes" GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q "$2" 2>/dev/null
+  else
+    GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q "$2" 2>/dev/null
+  fi
+}
+
 # sync_repo <owner/name> <clone-path>: fast-forward a clean clone that sits on
 # its default branch. Never stashes, switches branches, or resets.
 sync_repo() {
@@ -354,7 +377,7 @@ sync_repo() {
     return 0
   fi
   ref="refs/remotes/$remote/$branch"
-  if ! GIT_TERMINAL_PROMPT=0 git -C "$path" fetch -q "$remote" 2>/dev/null; then
+  if ! fetch_batch "$path" "$remote"; then
     sync_row "$repo" skipped "pull failed" "$path"
     return 0
   fi
@@ -363,7 +386,13 @@ sync_repo() {
     sync_row "$repo" skipped "diverged" "$path"
     return 0
   fi
-  if ! git -C "$path" merge -q --ff-only "$ref" >/dev/null 2>&1; then
+  if git -C "$path" merge-base --is-ancestor "$ref" HEAD &&
+    [[ "$(git -C "$path" rev-parse HEAD)" != "$(git -C "$path" rev-parse "$ref")" ]]; then
+    sync_row "$repo" skipped "ahead of remote" "$path"
+    return 0
+  fi
+  # Hooks off: the fast-forward must not run the user's post-merge code.
+  if ! git -C "$path" -c core.hooksPath=/dev/null merge -q --ff-only "$ref" >/dev/null 2>&1; then
     sync_row "$repo" skipped "pull failed" "$path"
     return 0
   fi
@@ -388,7 +417,7 @@ sync_all() {
 }
 
 main() {
-  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs syncs
+  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs syncs top
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -427,12 +456,13 @@ main() {
       echo "expected owner/repo, got: $repo" >&2
       return "$EX_GENERIC"
     }
-    cfg=$(jq -cn --arg r "$repo" --arg pwd "$PWD" \
+    top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    cfg=$(jq -cn --arg r "$repo" --arg pwd "${top:-$PWD}" \
       '{default_clone_path: null, monitor: [{kind: "repo", repo: $r, path: $pwd}]}')
   fi
 
   require_auth
-  LOGIN=$(gh api user --jq .login)
+  LOGIN=$(run_gh api user --jq .login)
   queries=$(build_queries "$cfg" "$LOGIN" "$([[ -n "$repo" ]] && echo true || echo false)")
   if ((dump_queries)); then
     printf '%s\n' "$queries"
