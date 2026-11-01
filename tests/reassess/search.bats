@@ -135,7 +135,7 @@ monitor:
 monitor:
   - org: my-org
 '
-  jq -cn '[range(1000) | {repository: {nameWithOwner: "my-org/r", name: "r", isArchived: true}, number: ., title: "t", author: {login: "alice"}, isDraft: false, updatedAt: "2026-10-30T00:00:00Z"}]' \
+  jq -cn '[range(1000) | {repository: {nameWithOwner: "my-org/r", name: "r", isArchived: true}, number: ., title: ("t" + ("x" * 2000)), author: {login: "alice"}, isDraft: false, updatedAt: "2026-10-30T00:00:00Z"}]' \
     >"$GH_STUB_DIR/search_prs__my_org.json"
   prs
   [ "$status" -eq 0 ]
@@ -172,4 +172,39 @@ monitor:
   run --separate-stderr "$SCRIPT" o/r
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.prs[].number]' <<<"$output")" = '[7]' ]
+}
+
+@test "single-repo mode also searches every open PR in the repo" {
+  run --separate-stderr "$SCRIPT" o/r
+  [ "$status" -eq 0 ]
+  grep -qE '^search prs --repo o/r --state open' "$GH_STUB_DIR/calls.log"
+}
+
+@test "refresh mode does not search every open PR" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  prs
+  run ! grep -qE '^search prs --repo' "$GH_STUB_DIR/calls.log"
+}
+
+@test "auth check is scoped to github.com" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  prs
+  grep -q 'auth status --hostname github.com' "$GH_STUB_DIR/calls.log"
+}
+
+@test "a non-JSON search response fails instead of reporting success" {
+  write_config '
+monitor:
+  - org: my-org
+'
+  echo "<html>oops</html>" >"$GH_STUB_DIR/search_prs__my_org.json"
+  prs
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
 }

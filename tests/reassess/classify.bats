@@ -94,7 +94,6 @@ publish() {
 }
 
 @test "equal timestamps are not stale" {
-  REASSESS_NOW="2026-10-21T00:00:00Z"
   pr 2 alice
   publish
   view 2 "[]" "[$(rv me 2026-10-20T00:00:00Z COMMENTED)]" "[$(cm alice 2026-10-20T00:00:00Z)]"
@@ -110,6 +109,7 @@ publish() {
   threads 2 "[]"
   run_repo o/r
   [ "$(jq -r '.prs[0].bucket' <<<"$output")" = "B" ]
+  [ "$(jq -r '.prs[0].raw.my_last_touch' <<<"$output")" = "2026-10-20T00:00:00Z" ]
 }
 
 @test "bucket C when I left no review or comment" {
@@ -139,7 +139,7 @@ publish() {
   run_repo o/r
   [ "$(jq '.prs | length' <<<"$output")" -eq 1 ]
   [ "$(jq -r '.prs[0].bucket' <<<"$output")" = "A" ]
-  [ "$(jq '.prs[0].roles | length' <<<"$output")" -eq 4 ]
+  [ "$(jq '.prs[0].roles | length' <<<"$output")" -eq 5 ]
 }
 
 @test "draft candidate on a failing required check" {

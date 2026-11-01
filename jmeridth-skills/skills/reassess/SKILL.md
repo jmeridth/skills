@@ -6,7 +6,7 @@ argument-hint: [owner/repo | refresh]
 
 ## Reassess Workflow
 
-When invoked, follow this workflow automatically. Steps 1-5 are read-only. Never make changes, post comments, or launch reviews before the user approves in step 6.
+When invoked, follow this workflow automatically. Steps 1-4 never post, comment, resolve, or launch anything. The one write is the script's clone sync: a `git fetch` and a fast-forward of clean clones on their default branch (details in step 2). Never make other changes, post comments, or launch reviews before the user approves in step 5.
 
 A script does the deterministic work: discovery, bucket and draft-candidate classification, and clone sync. It is the single source of truth for those rules. Do not recompute them by hand. Your job is the judgment around its output.
 
@@ -27,7 +27,7 @@ The config is read only for `refresh`. Never read it, or widen the scope, unless
 
 ### 2. Run the script (mandatory, always first)
 
-The script sits next to this file, at `scripts/reassess-candidates` under this skill's base directory. Run it as the first command of every reassessment:
+The script sits next to this file, at `scripts/reassess-candidates` under this skill's base directory. Run it as the first reassessment command, after resolving the scope in step 1:
 
 ```bash
 SCRIPT=<skill base directory>/scripts/reassess-candidates
@@ -35,7 +35,7 @@ SCRIPT=<skill base directory>/scripts/reassess-candidates
 "$SCRIPT" --config ~/.config/jmeridth-skills/config.yaml      # refresh
 ```
 
-It syncs local clones, searches with `gh search prs`, fetches detail for the candidates only, and prints one JSON object. If the script is missing from the transcript, the run is invalid.
+It searches with `gh search prs`, fetches detail for the candidates only, classifies them, then syncs the local clone of each repo that has rows, and prints one JSON object. The sync runs `git fetch` and `git merge --ff-only`, and only on a clean tree on the default branch. A repo with no rows gets no `sync` entry. If the script is missing from the transcript, the run is invalid.
 
 Exit codes:
 
@@ -50,10 +50,11 @@ Output:
 ```json
 {
   "prs": [{"repo": "", "number": 0, "title": "", "author": "", "bucket": "A|B|C|null",
-           "draft_candidate": false, "reasons": [], "updatedAt": "", "clone_path": "",
-           "raw": {"last_other_activity": "", "my_last_activity": "",
-                   "my_last_review": "", "head_commit": ""}}],
-  "sync": [{"repo": "", "status": "synced|skipped", "reason": "", "clone_path": ""}],
+           "isDraft": false, "draft_candidate": false, "reasons": [], "roles": [],
+           "updatedAt": "", "clone_path": "or null",
+           "raw": {"last_other_activity": "", "my_last_activity": "", "my_last_review": "",
+                   "my_last_touch": "", "head_commit": ""}}],
+  "sync": [{"repo": "", "status": "synced|skipped", "reason": "", "clone_path": "or null"}],
   "truncated": [{"query": ""}]
 }
 ```
@@ -62,7 +63,7 @@ What the buckets mean (the script applies these; use them to explain, not to rec
 
 - **A**: my PR where someone else's activity is newer than mine. Resolved threads and plain bot noise are ignored
 - **B**: a PR I reviewed or commented on where the head commit is newer than my last touch
-- **C**: a PR by someone else, not a draft, where I left no review or comment
+- **C**: a PR by someone else, not a draft, where I left no review or comment. Single-repo mode considers every open PR in the repo. `refresh` considers only PRs with a review request, to keep org-wide runs bounded
 - A PR appears once, in the highest bucket (A, then B, then C)
 - **Draft candidate** is a flag, not a bucket: required checks failing, or no author activity 7+ days after my review. It never applies to my PRs or drafts
 
@@ -89,14 +90,14 @@ Print a summary table before doing anything else. In `refresh` mode, include the
 - Link every PR as a clickable markdown link
 - For each draft candidate, state the reason from `reasons` and set the recommended action to "move to draft?"
 - The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order
-- If `prs` is empty, say "All caught up - no PRs need attention" and stop
+- If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention" and stop. If `truncated` is not empty, say the result may be incomplete instead
 
 ### 5. Wait for approval, then act
 
 Ask the user which PRs to act on. Never proceed without an explicit choice. Then, one PR at a time:
 
 - **Bucket A** (my PR, new comments): invoke the `pr-comments` skill with the PR number
-- **Bucket B** (stale review): invoke the `review` skill with the PR number, and tell it to focus on the delta since my last review (the commits pushed after `raw.my_last_review`)
+- **Bucket B** (stale review): invoke the `review` skill with the PR number, and tell it to focus on the delta since my last review (the commits pushed after `raw.my_last_touch`, which is the later of my last review or comment)
 - **Bucket C** (needs first review): invoke the `review` skill with the PR number for a full review
 - **Draft candidates**: ask the user explicitly, per PR, whether to move it to draft. On approval, run `gh pr ready {number} --repo {repo} --undo`. If the command fails for lack of permission (write access is required to draft someone else's PR), report that and move on - do not retry or work around it. Never move a PR to draft without explicit per-PR approval
 - If neither skill is available, say so and offer a manual `gh` based workflow instead of silently improvising
@@ -106,7 +107,7 @@ When several PRs are approved at once, the `review` skill can run them concurren
 
 ### Rules
 
-- Steps 1-4 are strictly read-only: no posting, no committing, no resolving threads
+- Steps 1-4 never post, commit, or resolve threads. The only write is the script's clone sync (fetch plus fast-forward of clean default-branch clones)
 - Always use the authenticated login (the script reads it from `gh api user`), never assume the username
 - **Fresh queries every invocation**: run the script again on every invocation. Never carry forward bucket assignments or "unchanged since" judgments from an earlier run in the same session; human activity between runs (an approval, a review, a push) is exactly what this workflow exists to catch. Audit: a run whose transcript reuses a prior run's table without re-running the script is invalid
 - `refresh` runs only when the user asks. Nothing polls in the background. A recurring check can wrap `reassess refresh` later with `/loop` or `/schedule`

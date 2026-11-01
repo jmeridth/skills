@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034 # exit codes are used by functions added in later tasks
 # Discover open PRs needing attention for one repo or a config of monitored
 # repos, classify them into buckets A/B/C, and print JSON.
 set -euo pipefail
@@ -83,7 +82,7 @@ load_config() {
 }
 
 require_auth() {
-  if ! gh auth status >/dev/null 2>&1; then
+  if ! gh auth status --hostname "${GH_HOST:-github.com}" --active >/dev/null 2>&1; then
     echo "gh is not authenticated; run: gh auth login" >&2
     exit "$EX_UNAUTH"
   fi
@@ -109,11 +108,13 @@ run_gh() {
   return "$EX_GENERIC"
 }
 
-# build_queries <config-json> <login>: print a JSON array of search queries,
-# one per (org or repo chunk) x role. Repo entries share queries, ten per chunk.
+# build_queries <config-json> <login> <with-open>: print a JSON array of search
+# queries, one per (org or repo chunk) x role. Repo entries share queries, ten
+# per chunk. With-open (true/false) adds an unfiltered open-PR query per chunk,
+# which single-repo mode needs to find PRs I have not touched.
 build_queries() {
-  # shellcheck disable=SC2016 # $login is a jq variable
-  jq -c --arg login "$2" '
+  # shellcheck disable=SC2016 # $login and $open are jq variables
+  jq -c --arg login "$2" --argjson open "${3:-false}" '
     ["review-requested", "author", "reviewed-by", "commenter"] as $roles
     | ["--state", "open", "--archived=false"] as $common
     | ([.monitor[] | select(.kind == "org") | .org] | unique_by(ascii_downcase)) as $orgs
@@ -125,30 +126,35 @@ build_queries() {
              args: (["--" + $r, $login, "--owner", $o] + $common)}),
         ($chunks[] as $c | $roles[] as $r
           | {role: $r, scope: ("repo:" + ($c | join(" repo:"))),
-             args: (["--" + $r, $login] + [$c[] | ("--repo", .)] + $common)})
+             args: (["--" + $r, $login] + [$c[] | ("--repo", .)] + $common)}),
+        (if $open then $chunks[] as $c
+          | {role: "open", scope: ("repo:" + ($c | join(" repo:"))),
+             args: ([$c[] | ("--repo", .)] + $common)}
+        else empty end)
       ]' <<<"$1"
 }
 
 # discover <config-json> <queries-json>: run every search and print
 # {"prs": [...], "truncated": [...]}. Any search failure aborts with no output.
 discover() {
-  local cfg="$1" queries="$2" q role scope out found="[]" truncated="[]"
+  local cfg="$1" queries="$2" q role scope out count found="[]" truncated="[]"
   local -a args
   while IFS= read -r q; do
     args=()
     while IFS= read -r a; do args+=("$a"); done < <(jq -r '.args[]' <<<"$q")
-    role=$(jq -r .role <<<"$q")
-    scope=$(jq -r .scope <<<"$q")
+    role=$(jq -r .role <<<"$q") || return 1
+    scope=$(jq -r .scope <<<"$q") || return 1
     out=$(run_gh search prs "${args[@]}" --limit 1000 \
       --json repository,number,title,author,isDraft,updatedAt) || return $?
     # shellcheck disable=SC2016 # $role, $new are jq variables
-    found=$(jq -c --argjson new "$out" --arg role "$role" '
-      . + [$new[] | {
+    found=$(jq -c --slurpfile new <(printf '%s' "$out") --arg role "$role" '
+      . + [$new[0][] | {
         repo: .repository.nameWithOwner, number: .number, title: .title,
         author: .author.login, isDraft: .isDraft, updatedAt: .updatedAt,
-        archived: (.repository.isArchived // false), roles: [$role]}]' <<<"$found")
-    if [[ "$(jq length <<<"$out")" -ge 1000 ]]; then
-      truncated=$(jq -c --arg q "$role $scope" '. + [{query: $q}]' <<<"$truncated")
+        archived: (.repository.isArchived // false), roles: [$role]}]' <<<"$found") || return 1
+    count=$(jq length <<<"$out") || return 1
+    if ((count >= 1000)); then
+      truncated=$(jq -c --arg q "$role $scope" '. + [{query: $q}]' <<<"$truncated") || return 1
     fi
   done < <(jq -c '.[]' <<<"$queries")
 
@@ -215,22 +221,23 @@ classify_pr() {
     rm -f "$errf"
   fi
   # shellcheck disable=SC2016 # all $names below are jq variables
-  jq -cn --argjson pr "$pr" --argjson v "$view" --argjson t "$threads" \
+  jq -cn --argjson pr "$pr" --slurpfile v <(printf '%s' "$view") \
+    --slurpfile t <(printf '%s' "$threads") \
     --argjson checks "$checks" --arg login "$LOGIN" --arg now "$now" '
     def isbot: endswith("[bot]");
     def latest: if length == 0 then null else max end;
     def secs: fromdateiso8601;
     ($pr.author == $login) as $mine
-    | ($t.data.repository.pullRequest.reviewThreads.nodes // []) as $threads
+    | ($t[0].data.repository.pullRequest.reviewThreads.nodes // []) as $threads
     | [
-        ($v.comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment"}),
-        ($v.reviews[]? | select(.state != "PENDING")
+        ($v[0].comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment"}),
+        ($v[0].reviews[]? | select(.state != "PENDING")
           | {who: (.author.login // "ghost"), at: .submittedAt, kind: "review", state: .state,
              trivial: (.state == "COMMENTED" and ((.body // "") == ""))}),
         ($threads[] | .isResolved as $res | .comments.nodes[]
           | {who: (.author.login // "ghost"), at: .createdAt, kind: "inline", resolved: $res})
       ] as $ev
-    | [$v.commits[]? | {at: .committedDate, who: [.authors[]?.login]}] as $commits
+    | [$v[0].commits[]? | {at: .committedDate, who: [.authors[]?.login]}] as $commits
     | ([$ev[] | select(.who == $login) | .at] | latest) as $my_touch
     | ([$ev[] | select(.who == $login and .kind == "review") | .at] | latest) as $my_review
     | ([$ev[] | select(.who == $login) | .at] + [$commits[] | select(.who | index($login)) | .at]
@@ -244,7 +251,7 @@ classify_pr() {
     | ([$ev[] | select(.who == $pr.author) | .at] + [$commits[] | select(.who | index($pr.author)) | .at]
        | latest) as $author_last
     | ($my_review != null and ($now | secs) - ($my_review | secs) >= 604800
-       and ($author_last == null or $author_last <= $my_review)) as $stale
+       and ($author_last == null or $author_last < $my_review)) as $stale
     | ([$checks.items[] | select(.bucket == "fail") | .name]) as $failing
     | ($mine | not) as $theirs
     | (if $mine then
@@ -276,7 +283,8 @@ classify_pr() {
         ),
         clone_path: null,
         raw: {last_other_activity: $last_other, my_last_activity: $my_activity,
-              my_last_review: $my_review, head_commit: $head}
+              my_last_review: $my_review, my_last_touch: $my_touch,
+              head_commit: $head}
       }'
 }
 
@@ -286,7 +294,7 @@ classify_all() {
   local prs="$1" now="$2" rows="[]" pr row
   while IFS= read -r pr; do
     row=$(classify_pr "$pr" "$now") || return $?
-    rows=$(jq -c --argjson row "$row" '. + [$row]' <<<"$rows")
+    rows=$(jq -c --argjson row "$row" '. + [$row]' <<<"$rows") || return 1
   done < <(jq -c '.[]' <<<"$prs")
   jq -c '
     def rank: {"A": 0, "B": 1, "C": 2}[.bucket // ""] // 3;
@@ -373,8 +381,8 @@ sync_all() {
          | map(select(. != null)) | first) as $p
       | if $p != null then $p
         elif .default_clone_path != null then .default_clone_path + "/" + ($r | split("/")[1])
-        else "" end' <<<"$cfg")
-    rows=$(jq -c --argjson row "$(sync_repo "$repo" "$path")" '. + [$row]' <<<"$rows")
+        else "" end' <<<"$cfg") || return 1
+    rows=$(jq -c --argjson row "$(sync_repo "$repo" "$path")" '. + [$row]' <<<"$rows") || return 1
   done < <(jq -r '[.[].repo] | unique_by(ascii_downcase) | .[]' <<<"$prs")
   printf '%s\n' "$rows"
 }
@@ -425,7 +433,7 @@ main() {
 
   require_auth
   LOGIN=$(gh api user --jq .login)
-  queries=$(build_queries "$cfg" "$LOGIN")
+  queries=$(build_queries "$cfg" "$LOGIN" "$([[ -n "$repo" ]] && echo true || echo false)")
   if ((dump_queries)); then
     printf '%s\n' "$queries"
     return 0
@@ -435,11 +443,11 @@ main() {
   prs=$(classify_all "$(jq -c .prs <<<"$found")" "$now")
   syncs=$(sync_all "$cfg" "$prs")
   # shellcheck disable=SC2016 # $prs, $syncs are jq variables
-  jq -c --argjson prs "$prs" --argjson syncs "$syncs" '
+  jq -c --slurpfile prs <(printf '%s' "$prs") --slurpfile syncs <(printf '%s' "$syncs") '
     . + {
-      prs: ($prs | map(. as $p | .clone_path = ([$syncs[]
+      prs: ($prs[0] | map(. as $p | .clone_path = ([$syncs[0][]
         | select((.repo | ascii_downcase) == ($p.repo | ascii_downcase)) | .clone_path][0]))),
-      sync: $syncs
+      sync: $syncs[0]
     }' <<<"$found"
 }
 
