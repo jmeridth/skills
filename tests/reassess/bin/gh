@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Stub gh for tests. See tests/reassess/helpers.bash.
+set -euo pipefail
+
+dir="${GH_STUB_DIR:?GH_STUB_DIR not set}"
+echo "$*" >>"$dir/calls.log"
+
+if [[ -n "${GH_STUB_FAIL_MATCH:-}" && "$*" == *"$GH_STUB_FAIL_MATCH"* ]]; then
+  echo "${GH_STUB_FAIL_MSG:-HTTP 403: API rate limit exceeded}" >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  [[ -z "${GH_STUB_UNAUTH:-}" ]] || exit 1
+  exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+  cat "$dir/user"
+  exit 0
+fi
+
+base="${1:-}_${2:-}"
+base="${base//[^a-zA-Z0-9_]/_}"
+# Most specific fixture: any later non-flag argument, slugged.
+for arg in "${@:3}"; do
+  [[ "$arg" == -* ]] && continue
+  slug="${arg//[^a-zA-Z0-9]/_}"
+  if [[ -f "$dir/${base}__${slug}.fail" ]]; then
+    # The .fail file holds the stderr message; empty means a generic failure.
+    if [[ -s "$dir/${base}__${slug}.fail" ]]; then cat "$dir/${base}__${slug}.fail" >&2; else echo "boom" >&2; fi
+    exit 1
+  fi
+  if [[ -f "$dir/${base}__${slug}.json" ]]; then
+    cat "$dir/${base}__${slug}.json"
+    # A sibling .exit file makes the stub exit non-zero after printing, like gh pr checks.
+    [[ -f "$dir/${base}__${slug}.exit" ]] && exit "$(cat "$dir/${base}__${slug}.exit")"
+    exit 0
+  fi
+done
+
+if [[ -f "$dir/$base.json" ]]; then
+  cat "$dir/$base.json"
+else
+  case "$base" in
+    pr_view) echo '{"comments":[],"reviews":[],"commits":[]}' ;;
+    api_graphql) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
+    *) echo "[]" ;;
+  esac
+fi

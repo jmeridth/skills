@@ -44,7 +44,7 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | `pr` | Open a pull request: gather context, draft and copyedit a short description, set assignee and labels. |
 | `pr-comments` | Fetch, assess, and address PR review comments, then reply and resolve threads. |
 | `review` | Review a PR or the current feature branch with a multi-model, verification-first workflow. |
-| `reassess` | Scan open PRs for new comments on yours, stale reviews, and PRs awaiting review. |
+| `reassess` | Scan open PRs for new comments on yours, stale reviews, and PRs awaiting review. `reassess refresh` covers every org and repo in `~/.config/jmeridth-skills/config.yaml`. |
 | `repo-reset` | Pull latest main, switch to it, then clean up merged branches and worktrees. |
 | `gha-standards` | GitHub Actions workflow standards: security hardening, permissions, conventions. |
 | `go-standards` | Go coding standards: syntax preferences, libraries, code quality, package design, testing. |

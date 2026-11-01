@@ -1,120 +1,116 @@
 ---
 name: reassess
-description: Scan open pull requests on the current repository (or a repo passed in) and surface the ones needing attention. Finds PRs you authored that have new comments, PRs you reviewed where the author has since pushed updates, and new PRs awaiting your review. Use when the user says "reassess", "assess PRs", "check my PRs", "any PR updates", or "what PRs need my attention". Hands off to the pr-comments and review skills when available.
-argument-hint: [owner/repo]
+description: Scan open pull requests on the current repository, a repo passed in, or every monitored repo (refresh), and surface the ones needing attention. Finds PRs you authored that have new comments, PRs you reviewed where the author has since pushed updates, and new PRs awaiting your review. Use when the user says "reassess", "reassess refresh", "assess PRs", "check my PRs", "any PR updates", or "what PRs need my attention". Hands off to the pr-comments and review skills when available.
+argument-hint: [owner/repo | refresh]
 ---
 
 ## Reassess Workflow
 
-When invoked, follow this workflow automatically. Steps 1-5 are read-only. Never make changes, post comments, or launch reviews before the user approves in step 6.
+When invoked, follow this workflow automatically. Steps 1-4 never post, comment, resolve, or launch anything. The one write is the script's clone sync: a `git fetch` and a fast-forward of clean clones on their default branch (details in step 2). Never make other changes, post comments, or launch reviews before the user approves in step 5.
 
-### 0. Sync local state first (mandatory)
+A script does the deterministic work: discovery, bucket and draft-candidate classification, and clone sync. It is the single source of truth for those rules. Do not recompute them by hand. Your job is the judgment around its output.
 
-If a local clone of the target repository exists, pull the latest default branch before any assessment: `git pull upstream main` (or `origin`). Never compute version targets, conflict states, or "what changed" against a stale checkout, and never rely on repo state read earlier in the session.
+| Argument | Scope |
+| --- | --- |
+| none | the repository in the current directory |
+| `owner/repo` (or a repo URL) | that repository |
+| `refresh` | every org and repo in `~/.config/jmeridth-skills/config.yaml` |
 
-Correct:
+The config is read only for `refresh`. Never read it, or widen the scope, unless the user asked for it.
 
-```bash
-git -C ~/code/repo checkout main -q && git -C ~/code/repo pull -q upstream main
-```
+### 1. Resolve the scope
 
-Wrong: reusing a chart version or merge state fetched hours earlier; it produces pings to already-merged PRs and wrong re-bump targets.
+- `refresh`: no repo needed. Go to step 2
+- Argument given: normalize a repo URL to `owner/repo`
+- No argument: detect from the current directory with `gh repo view --json nameWithOwner --jq .nameWithOwner`
+- If none of these work, ask the user which repository to assess
 
-**Audit:** The first command of every reassessment run is the pull. If it is missing from the transcript, the run is invalid.
+### 2. Run the script (mandatory, always first)
 
-### 1. Resolve the repository
-
-- If an argument was given (`owner/repo` or a repo URL), use it and pass `--repo owner/repo` to every `gh` command below
-- Otherwise detect from the current directory: `gh repo view --json nameWithOwner --jq .nameWithOwner`
-- If neither works, ask the user which repository to assess
-
-### 2. Identify the user
-
-- Get the authenticated login: `gh api user --jq .login`
-- Use this login (not a hardcoded name) for all authorship and reviewer comparisons below
-
-### 3. List open pull requests
+The script sits next to this file, at `scripts/reassess-candidates` under this skill's base directory. Run it as the first reassessment command, after resolving the scope in step 1:
 
 ```bash
-gh pr list --state open --limit 100 \
-  --json number,title,author,isDraft,updatedAt,reviewDecision,headRefOid
+SCRIPT=<skill base directory>/scripts/reassess-candidates
+"$SCRIPT" owner/repo                                          # single repo
+"$SCRIPT" --config ~/.config/jmeridth-skills/config.yaml      # refresh
 ```
 
-- If exactly 100 results come back, say so and note the list may be truncated
-- Skip drafts authored by others (they are not ready for review). Keep your own drafts, since comments can still arrive on them
+It searches with `gh search prs`, fetches detail for the candidates only, classifies them, then syncs the local clone of each repo that has rows, and prints one JSON object. The sync runs `git fetch` and `git merge --ff-only`, and only on a clean tree on the default branch. A repo with no rows gets no `sync` entry. If the script is missing from the transcript, the run is invalid.
 
-### 4. Classify each PR into one of three buckets
+Exit codes:
 
-#### A. My PRs with new activity
+- `0`: success
+- `2`: config problem. Relay the error and the expected schema it printed, then stop. Do not fall back to the current repo
+- `3`: GitHub rate limit. Report it and stop. Do not retry and do not guess from partial data
+- `4`: `gh` is not authenticated. Tell the user to run `gh auth login`
+- `1`: anything else. Show stderr and stop
 
-PRs authored by the login from step 2:
+Output:
 
-- Fetch all activity: `gh pr view {number} --json comments,reviews,commits`
-- Also fetch inline review comments: `gh api repos/{owner}/{repo}/pulls/{number}/comments`
-- Find the newest comment or review **not written by me** and skip bot noise (logins ending in `[bot]`, e.g. `dependabot[bot]`, `github-actions[bot]`) unless it is a review with actionable inline comments
-- Find **my** last activity on the PR: the later of my last pushed commit and my last comment or reply
-- If someone else's activity is newer than mine, the PR goes in bucket A - there is feedback I have not addressed
-- If a review thread is already resolved, do not count it as new activity
-
-#### B. PRs I reviewed where the author has pushed updates
-
-- Candidates: `gh pr list --state open --search "reviewed-by:{login}"` **plus** `gh pr list --state open --search "commenter:{login}"`, minus my own PRs. Substantive comment-form feedback counts the same as a formal review; the author cannot tell the difference and neither should the triage.
-- For commenter-only candidates, compare my last comment time against the head commit time instead of a review `submittedAt`
-- For each, get my latest review time (`gh pr view {number} --json reviews`, filter to my login, take the newest `submittedAt`) and the head commit time (`gh pr view {number} --json commits`, take the last `committedDate`)
-- If the head commit is newer than my last review, the PR goes in bucket B - my review is stale and needs a re-review
-- If my last review was an approval and nothing else changed besides the new commits, still include it, but note it was previously approved
-
-#### C. New PRs that need review
-
-- Explicit requests: `gh pr list --state open --search "review-requested:{login}" --json number,title,author`
-- Plus any open non-draft PR not authored by me where I have left no review and no comment
-- Exclude PRs already in bucket B
-
-A PR can qualify for more than one bucket (e.g. the author replied to my review AND pushed commits). List it once, in the highest-priority bucket: A, then B, then C.
-
-### 4.5 Flag draft candidates
-
-In addition to its bucket, flag any non-draft PR **not authored by me** as a **draft candidate** if either condition holds:
-
-- **Failing required checks**: `gh pr checks {number} --required` reports one or more failures. Only count required checks; ignore failing optional checks
-- **Stale after my review**: I have reviewed the PR, and the author has made no updates (no commits, no comments, no pushes) in the 7 days after my latest review. Compare the PR's last author activity against my latest review `submittedAt`, using the current UTC time from `date -u +%Y-%m-%dT%H:%M:%SZ`
-
-This is a flag, not a bucket - a PR keeps its bucket (or no bucket) and additionally shows as a draft candidate. Never flag my own PRs or PRs already in draft.
-
-### 5. Report the assessment
-
-Print a summary table before doing anything else:
-
-```
-| PR | Title | Author | Bucket | What changed | Recommended action |
-| --- | --- | --- | --- | --- | --- |
-| #12 | Fix race in worker pool | alice | B | 2 commits since my review | re-review (review skill) |
-| #15 | Add retry logic | me | A | 3 new comments from bob | address comments (pr-comments skill) |
-| #17 | Refactor config loader | carol | - | required CI failing; no updates in 9 days since my review | move to draft? |
+```json
+{
+  "prs": [{"repo": "", "number": 0, "title": "", "author": "", "bucket": "A|B|C|null",
+           "isDraft": false, "draft_candidate": false, "reasons": [], "roles": [],
+           "updatedAt": "", "clone_path": "or null",
+           "raw": {"last_other_activity": "", "my_last_activity": "", "my_last_review": "",
+                   "my_last_touch": "", "head_commit": ""}}],
+  "sync": [{"repo": "", "status": "synced|skipped", "reason": "", "clone_path": "or null"}],
+  "truncated": [{"query": ""}]
+}
 ```
 
-- For each draft candidate, state the reason (failing required checks, stale after review, or both) in the "What changed" column and set the recommended action to "move to draft?"
+What the buckets mean (the script applies these; use them to explain, not to recompute):
 
-- If all buckets are empty, say "All caught up - no PRs need attention" and stop
-- Sort within each bucket by `updatedAt`, most recent first
+- **A**: my PR where someone else's activity is newer than mine. Resolved threads and plain bot noise are ignored
+- **B**: a PR I reviewed or commented on where the head commit is newer than my last touch
+- **C**: a PR by someone else, not a draft, where I left no review or comment. Single-repo mode considers every open PR in the repo. `refresh` considers only PRs with a review request, to keep org-wide runs bounded
+- A PR appears once, in the highest bucket (A, then B, then C)
+- **Draft candidate** is a flag, not a bucket: required checks failing, or no author activity 7+ days after my review. It never applies to my PRs or drafts
 
-### 6. Wait for approval, then act
+### 3. Apply judgment
+
+- **Same-login provenance guard**: reviews and comments under the authenticated login may be the human's own work, not the agent's. If a review from that login is not in session context, treat it as human-authored: read it before acting, never post anything that contradicts or dismisses it, and hand clearance of the human's own changes-requested review back to the human
+- **Bot reviews**: when `reasons` mentions a bot review with inline comments, read those comments and say whether they are actionable
+- **Stale local state**: for every `sync` entry with `status: skipped`, say why (no clone, dirty tree, not on the default branch, diverged, ahead of remote, pull failed). Never compute version targets, conflict states, or "what changed" from a checkout the script did not sync
+- **Truncation**: if `truncated` is not empty, say the listed searches hit the 1000-result cap and the report may be incomplete
+- **Checks**: if `reasons` says required checks were unavailable, say the draft-candidate check was skipped for that PR
+
+### 4. Report the assessment
+
+Print a summary table before doing anything else. In `refresh` mode, include the `Repo` column. In single-repo mode, drop it.
+
+```
+| Repo | PR | Title | Author | Bucket | What changed | Recommended action |
+| --- | --- | --- | --- | --- | --- | --- |
+| o/api | #12 | Fix race in worker pool | alice | B | 2 commits since my review | re-review (review skill) |
+| o/api | #15 | Add retry logic | me | A | new feedback from bob | address comments (pr-comments skill) |
+| o/web | #17 | Refactor config loader | carol | - | required checks failing: build | move to draft? |
+```
+
+- Link every PR as a clickable markdown link
+- For each draft candidate, state the reason from `reasons` and set the recommended action to "move to draft?"
+- The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order
+- If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention" and stop. If `truncated` is not empty, say the result may be incomplete instead
+
+### 5. Wait for approval, then act
 
 Ask the user which PRs to act on. Never proceed without an explicit choice. Then, one PR at a time:
 
-- **Bucket A** (my PR, new comments): invoke the `pr-comments` skill with the PR number. If that skill is not available, fall back to fetching the comments manually, assessing each one, and presenting fixes for approval
-- **Bucket B** (stale review): invoke the `review` skill with the PR number, and tell it to focus on the delta since my last review (the commits pushed after my `submittedAt`)
+- **Bucket A** (my PR, new comments): invoke the `pr-comments` skill with the PR number
+- **Bucket B** (stale review): invoke the `review` skill with the PR number, and tell it to focus on the delta since my last review (the commits pushed after `raw.my_last_touch`, which is the later of my last review or comment)
 - **Bucket C** (needs first review): invoke the `review` skill with the PR number for a full review
-- **Draft candidates**: ask the user explicitly, per PR, whether to move it to draft. On approval, run `gh pr ready {number} --undo`. If the command fails for lack of permission (write access is required to draft someone else's PR), report that and move on - do not retry or work around it. Never move a PR to draft without explicit per-PR approval
+- **Draft candidates**: ask the user explicitly, per PR, whether to move it to draft. On approval, run `gh pr ready {number} --repo {repo} --undo`. If the command fails for lack of permission (write access is required to draft someone else's PR), report that and move on - do not retry or work around it. Never move a PR to draft without explicit per-PR approval
 - If neither skill is available, say so and offer a manual `gh` based workflow instead of silently improvising
+- Always pass the repo explicitly when handing off, since the skill may run outside that repo's directory
+
+When several PRs are approved at once, the `review` skill can run them concurrently in separate orchestrator subagents.
 
 ### Rules
 
-- Steps 1-5 are strictly read-only: no posting, no committing, no resolving threads
-- Always use the authenticated login from step 2, never assume the username
-- **Fresh queries every invocation**: re-run every search and per-PR fetch in steps 3-4 on each run. Never carry forward bucket assignments, reviewed-by results, or "unchanged since" judgments from an earlier run in the same session; human activity between runs (an approval, a review, a push) is exactly what this workflow exists to catch. An `updatedAt` bump with no visible author push may be a review under the authenticated login, so fetch the PR's reviews before classifying it. Audit: a run whose transcript reuses a prior run's bucket table without re-running the step 4 searches is invalid
-- **Same-login provenance guard**: reviews and comments under the authenticated login may be the human's own work, not the agent's. If a review from that login is not in session context, treat it as human-authored: read it before acting, never post anything that contradicts or dismisses it, and hand clearance of the human's own changes-requested review back to the human
-- Always ignore resolved review threads when deciding whether a PR has new activity
-- Always compare timestamps in UTC as returned by the API; do not parse them into local time
-- If `gh` is not authenticated (`gh auth status` fails), stop and tell the user to run `gh auth login`
-- When handing off to `pr-comments` or `review`, pass the repo explicitly if it was passed in as an argument, since the skill may run outside that repo's directory
+- Steps 1-4 never post, commit, or resolve threads. The only write is the script's clone sync (fetch plus fast-forward of clean default-branch clones)
+- Always use the authenticated login (the script reads it from `gh api user`), never assume the username
+- **Fresh queries every invocation**: run the script again on every invocation. Never carry forward bucket assignments or "unchanged since" judgments from an earlier run in the same session; human activity between runs (an approval, a review, a push) is exactly what this workflow exists to catch. Audit: a run whose transcript reuses a prior run's table without re-running the script is invalid
+- `refresh` runs only when the user asks. Nothing polls in the background. A recurring check can wrap `reassess refresh` later with `/loop` or `/schedule`
+- Always ignore resolved review threads when deciding whether a PR has new activity (the script already does)
+- Timestamps compare in UTC as the API returns them; do not parse them into local time
+- When handing off to `pr-comments` or `review`, pass the repo explicitly

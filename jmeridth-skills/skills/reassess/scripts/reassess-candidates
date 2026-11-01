@@ -1,0 +1,484 @@
+#!/usr/bin/env bash
+# Discover open PRs needing attention for one repo or a config of monitored
+# repos, classify them into buckets A/B/C, and print JSON.
+set -euo pipefail
+
+EX_GENERIC=1
+EX_CONFIG=2
+EX_RATE_LIMIT=3
+EX_UNAUTH=4
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  reassess-candidates owner/repo
+  reassess-candidates --config PATH
+  reassess-candidates --dump-config --config PATH
+  reassess-candidates --dump-queries (owner/repo | --config PATH)
+  reassess-candidates --help
+
+Exit codes: 1 generic, 2 config error, 3 rate limit, 4 gh not authenticated.
+USAGE
+}
+
+config_schema() {
+  cat <<'SCHEMA'
+Expected config (~/.config/jmeridth-skills/config.yaml):
+
+default_clone_path: ~/code        # optional; paths are absolute or start with ~/
+monitor:                          # required, non-empty
+  - org: my-org                   # every repo in the org
+    exclude: [legacy, sandbox]    # optional repo names to skip
+  - repo: other-org/one-repo      # a single owner/name
+    path: ~/work/one-repo         # optional clone path override
+SCHEMA
+}
+
+config_fail() {
+  echo "config error: $1" >&2
+  config_schema >&2
+  exit "$EX_CONFIG"
+}
+
+require_yq() {
+  local version
+  version=$(yq --version 2>&1 || true)
+  if [[ "$version" != *mikefarah* || "$version" != *"version v4"* ]]; then
+    config_fail "needs mikefarah yq v4 (found: ${version:-no yq on PATH})"
+  fi
+}
+
+# load_config <path>: print the validated, normalized config as JSON.
+load_config() {
+  local path="$1" raw out
+  [[ -f "$path" ]] || config_fail "file not found: $path"
+  require_yq
+  raw=$(yq -o=json '.' "$path" 2>&1) || config_fail "invalid YAML in $path"
+  # shellcheck disable=SC2016 # $home and $ex are jq variables
+  out=$(jq --arg home "$HOME" '
+    def path_of($what):
+      if . == null then null
+      elif type != "string" then error($what + " must be a string")
+      else (sub("^~(?=/|$)"; $home) | sub("/+$"; "")) as $p
+        | if $p == "" then error($what + " cannot be the filesystem root")
+          elif ($p | startswith("/") | not)
+          then error($what + " must be an absolute path or start with ~/")
+          else $p end
+      end;
+    def bad_name: type != "string" or . == "" or contains("/");
+    if type != "object" then error("config must be a mapping (key: value pairs)") else . end
+    | if (.monitor | type) != "array" or (.monitor | length) == 0
+      then error("monitor must be a non-empty list") else . end
+    | {
+        default_clone_path: (.default_clone_path | path_of("default_clone_path")),
+        monitor: [.monitor[] |
+          if type != "object" then error("each monitor entry must be a mapping with org or repo")
+          elif has("org") and has("repo") then error("entry has both org and repo")
+          elif has("org") then
+            (if (.org | bad_name) then error("org must be a name without a slash") else . end)
+            | (.exclude // []) as $ex
+            | (if ($ex | type) != "array" or ($ex | any(bad_name))
+               then error("exclude must be a list of repo names") else . end)
+            | {kind: "org", org: .org, exclude: $ex}
+          elif has("repo") then
+            (if (.repo | type) != "string" or (.repo | split("/") | length) != 2
+                or (.repo | split("/") | any(. == ""))
+             then error("repo must be owner/name") else . end)
+            | {kind: "repo", repo: .repo, path: (.path | path_of("path"))}
+          else error("entry needs org or repo") end
+        ]
+      }' <<<"$raw" 2>&1) || config_fail "${out#jq: error*: }"
+  printf '%s\n' "$out"
+}
+
+require_auth() {
+  if ! gh auth status --hostname "${GH_HOST:-github.com}" --active >/dev/null 2>&1; then
+    echo "gh is not authenticated; run: gh auth login" >&2
+    exit "$EX_UNAUTH"
+  fi
+}
+
+RATE_LIMIT_RE='rate limit|HTTP 429|too many requests'
+
+# run_gh <gh args...>: print gh's stdout. On failure print its stderr and
+# return 3 for a rate limit, else 1.
+run_gh() {
+  local err out
+  err=$(mktemp)
+  if out=$(gh "$@" 2>"$err"); then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if grep -Eqi "$RATE_LIMIT_RE" "$err"; then
+    echo "rate limited: gh $*" >&2
+    rm -f "$err"
+    return "$EX_RATE_LIMIT"
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  return "$EX_GENERIC"
+}
+
+# build_queries <config-json> <login> <with-open>: print a JSON array of search
+# queries, one per (org or repo chunk) x role. Repo entries share queries, ten
+# per chunk. With-open (true/false) adds an unfiltered open-PR query per chunk,
+# which single-repo mode needs to find PRs I have not touched.
+build_queries() {
+  # shellcheck disable=SC2016 # $login and $open are jq variables
+  jq -c --arg login "$2" --argjson open "${3:-false}" '
+    ["review-requested", "author", "reviewed-by", "commenter"] as $roles
+    | ["--state", "open", "--archived=false"] as $common
+    | ([.monitor[] | select(.kind == "org") | .org] | unique_by(ascii_downcase)) as $orgs
+    | ([.monitor[] | select(.kind == "repo") | .repo] | unique_by(ascii_downcase)
+       | [range(0; length; 10) as $i | .[$i:$i + 10]]) as $chunks
+    | [
+        ($orgs[] as $o | $roles[] as $r
+          | {role: $r, scope: ("org:" + $o),
+             args: (["--" + $r, $login, "--owner", $o] + $common)}),
+        ($chunks[] as $c | $roles[] as $r
+          | {role: $r, scope: ("repo:" + ($c | join(" repo:"))),
+             args: (["--" + $r, $login] + [$c[] | ("--repo", .)] + $common)}),
+        (if $open then $chunks[] as $c
+          | {role: "open", scope: ("repo:" + ($c | join(" repo:"))),
+             args: ([$c[] | ("--repo", .)] + $common)}
+        else empty end)
+      ]' <<<"$1"
+}
+
+# discover <config-json> <queries-json>: run every search and print
+# {"prs": [...], "truncated": [...]}. Any search failure aborts with no output.
+discover() {
+  local cfg="$1" queries="$2" q role scope out count found="[]" truncated="[]"
+  local -a args
+  while IFS= read -r q; do
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(jq -r '.args[]' <<<"$q")
+    role=$(jq -r .role <<<"$q") || return 1
+    scope=$(jq -r .scope <<<"$q") || return 1
+    out=$(run_gh search prs "${args[@]}" --limit 1000 \
+      --json repository,number,title,author,isDraft,updatedAt) || return $?
+    # shellcheck disable=SC2016 # $role, $new are jq variables
+    found=$(jq -c --slurpfile new <(printf '%s' "$out") --arg role "$role" '
+      . + [$new[0][] | {
+        repo: .repository.nameWithOwner, number: .number, title: .title,
+        author: .author.login, isDraft: .isDraft, updatedAt: .updatedAt,
+        archived: (.repository.isArchived // false), roles: [$role]}]' <<<"$found") || return 1
+    count=$(jq length <<<"$out") || return 1
+    if ((count >= 1000)); then
+      truncated=$(jq -c --arg q "$role $scope" '. + [{query: $q}]' <<<"$truncated") || return 1
+    fi
+  done < <(jq -c '.[]' <<<"$queries")
+
+  # shellcheck disable=SC2016 # $cfg, $login, $truncated are jq variables
+  jq -c --argjson cfg "$cfg" --argjson truncated "$truncated" --arg login "$LOGIN" '
+    def key: (.repo | ascii_downcase) + "#" + (.number | tostring);
+    ([$cfg.monitor[] | select(.kind == "repo") | .repo | ascii_downcase]) as $explicit
+    | ([$cfg.monitor[] | select(.kind == "org")
+        | {org: (.org | ascii_downcase), exclude: (.exclude | map(ascii_downcase))}]) as $orgs
+    | def excluded:
+        (.repo | ascii_downcase) as $r
+        | ($r | split("/")) as [$owner, $name]
+        | ($explicit | index($r) | not)
+          and any($orgs[]; .org == $owner and (.exclude | index($name) != null));
+    {
+      prs: (group_by(key) | map(.[0] + {roles: (map(.roles[]) | unique)})
+            | map(select((.archived | not) and (excluded | not)
+                         and ((.isDraft | not) or .author == $login)))
+            | map(del(.archived))),
+      truncated: $truncated
+    }' <<<"$found"
+}
+
+# shellcheck disable=SC2016 # $owner, $repo, $number are GraphQL variables
+THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes { isResolved comments(first: 100) { nodes { author { login } createdAt } } }
+      }
+    }
+  }
+}'
+
+# classify_pr <pr-json> <now-utc>: fetch detail for one candidate and print its row.
+classify_pr() {
+  local pr="$1" now="$2" repo number owner name view threads checks drafty
+  repo=$(jq -r .repo <<<"$pr")
+  number=$(jq -r .number <<<"$pr")
+  owner=${repo%%/*}
+  name=${repo#*/}
+  view=$(run_gh pr view "$number" --repo "$repo" --json comments,reviews,commits) || return $?
+  threads=$(run_gh api graphql -f query="$THREADS_QUERY" -f owner="$owner" -f repo="$name" \
+    -F number="$number") || return $?
+  checks='{"state": "skipped", "items": []}'
+  drafty=$(jq -r '(.author != $login) and (.isDraft | not)' --arg login "$LOGIN" <<<"$pr")
+  if [[ "$drafty" == "true" ]]; then
+    # gh pr checks exits non-zero for failing or pending checks, so judge by
+    # the JSON on stdout, not the exit code.
+    local out errf
+    errf=$(mktemp)
+    out=$(gh pr checks "$number" --repo "$repo" --required --json name,bucket 2>"$errf") || true
+    if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out"; then
+      checks=$(jq -c '{state: "ok", items: .}' <<<"$out")
+    elif grep -qi 'no required checks reported' "$errf"; then
+      checks='{"state": "ok", "items": []}'
+    elif grep -Eqi "$RATE_LIMIT_RE" "$errf"; then
+      rm -f "$errf"
+      echo "rate limited: gh pr checks $number" >&2
+      return "$EX_RATE_LIMIT"
+    else
+      checks='{"state": "unavailable", "items": []}'
+    fi
+    rm -f "$errf"
+  fi
+  # shellcheck disable=SC2016 # all $names below are jq variables
+  jq -cn --argjson pr "$pr" --slurpfile v <(printf '%s' "$view") \
+    --slurpfile t <(printf '%s' "$threads") \
+    --argjson checks "$checks" --arg login "$LOGIN" --arg now "$now" '
+    def isbot: endswith("[bot]");
+    def latest: if length == 0 then null else max end;
+    def secs: fromdateiso8601;
+    ($pr.author == $login) as $mine
+    | ($t[0].data.repository.pullRequest.reviewThreads.nodes // []) as $threads
+    | [
+        ($v[0].comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment"}),
+        ($v[0].reviews[]? | select(.state != "PENDING")
+          | {who: (.author.login // "ghost"), at: .submittedAt, kind: "review", state: .state,
+             trivial: (.state == "COMMENTED" and ((.body // "") == ""))}),
+        ($threads[] | .isResolved as $res | .comments.nodes[]
+          | {who: (.author.login // "ghost"), at: .createdAt, kind: "inline", resolved: $res})
+      ] as $ev
+    | [$v[0].commits[]? | {at: .committedDate, who: [.authors[]?.login]}] as $commits
+    | ([$ev[] | select(.who == $login) | .at] | latest) as $my_touch
+    | ([$ev[] | select(.who == $login and .kind == "review") | .at] | latest) as $my_review
+    | ([$ev[] | select(.who == $login) | .at] + [$commits[] | select(.who | index($login)) | .at]
+       | latest) as $my_activity
+    | ([$commits[] | .at] | latest) as $head
+    | [$ev[] | select(.who != $login and ((.trivial // false) | not)
+                      and ((.resolved // false) | not)
+                      and ((.who | isbot | not) or .kind == "inline"))] as $others
+    | ([$others[] | .at] | latest) as $last_other
+    | ([$others[] | select(.who | isbot) | .who] | unique) as $bots
+    | ([$ev[] | select(.who == $pr.author) | .at] + [$commits[] | select(.who | index($pr.author)) | .at]
+       | latest) as $author_last
+    | ($my_review != null and ($now | secs) - ($my_review | secs) >= 604800
+       and ($author_last == null or $author_last < $my_review)) as $stale
+    | ([$checks.items[] | select(.bucket == "fail") | .name]) as $failing
+    | ($mine | not) as $theirs
+    | (if $mine then
+         (if $last_other != null and $last_other > ($my_activity // "") then "A" else null end)
+       elif $my_touch != null then
+         (if $head != null and $head > $my_touch then "B" else null end)
+       elif ($pr.isDraft | not) then "C"
+       else null end) as $bucket
+    | ($theirs and ($pr.isDraft | not) and (($failing | length) > 0 or $stale)) as $draftable
+    | {
+        repo: $pr.repo, number: $pr.number, title: $pr.title, author: $pr.author,
+        isDraft: $pr.isDraft, updatedAt: $pr.updatedAt, roles: $pr.roles,
+        bucket: $bucket, draft_candidate: $draftable,
+        reasons: (
+          (if $bucket == "A" then
+             ["new feedback from " + ([$others[] | select(.at > ($my_activity // "")) | .who] | unique | join(", "))]
+           else [] end)
+          + (if $bucket == "B" then
+               [([$commits[] | select(.at > $my_touch)] | length | tostring) + " commits since my last review or comment"]
+             else [] end)
+          + (if $bucket == "B"
+                and ([$ev[] | select(.who == $login and .kind == "review")] | sort_by(.at) | last | .state) == "APPROVED"
+             then ["previously approved"] else [] end)
+          + (if $bucket == "A" and ($bots | length) > 0
+             then ["bot review with inline comments from " + ($bots | join(", "))] else [] end)
+          + (if ($failing | length) > 0 then ["required checks failing: " + ($failing | join(", "))] else [] end)
+          + (if $theirs and $stale then ["no author activity for 7+ days after my review"] else [] end)
+          + (if $checks.state == "unavailable" then ["required checks unavailable"] else [] end)
+        ),
+        clone_path: null,
+        raw: {last_other_activity: $last_other, my_last_activity: $my_activity,
+              my_last_review: $my_review, my_last_touch: $my_touch,
+              head_commit: $head}
+      }'
+}
+
+# classify_all <prs-json> <now-utc>: classify every candidate, keep rows that
+# need attention, and sort by bucket then updatedAt (newest first).
+classify_all() {
+  local prs="$1" now="$2" rows="[]" pr row
+  while IFS= read -r pr; do
+    row=$(classify_pr "$pr" "$now") || return $?
+    rows=$(jq -c --argjson row "$row" '. + [$row]' <<<"$rows") || return 1
+  done < <(jq -c '.[]' <<<"$prs")
+  jq -c '
+    def rank: {"A": 0, "B": 1, "C": 2}[.bucket // ""] // 3;
+    map(select(.bucket != null or .draft_candidate))
+    | sort_by(.updatedAt) | reverse | sort_by(rank)' <<<"$rows"
+}
+
+# remote_for <path> <owner/name>: print a remote whose URL points at the repo.
+remote_for() {
+  local path="$1" want r url
+  want=$(tr '[:upper:]' '[:lower:]' <<<"$2")
+  while IFS= read -r r; do
+    url=$(git -C "$path" remote get-url "$r" 2>/dev/null) || continue
+    url=$(tr '[:upper:]' '[:lower:]' <<<"$url")
+    url=${url%/}
+    url=${url%.git}
+    if [[ "$url" == *"/$want" || "$url" == *":$want" ]]; then
+      echo "$r"
+      return 0
+    fi
+  done < <(
+    printf 'upstream\norigin\n'
+    git -C "$path" remote
+  )
+  return 1
+}
+
+sync_row() {
+  jq -cn --arg repo "$1" --arg status "$2" --arg reason "$3" --arg path "$4" \
+    '{repo: $repo, status: $status, reason: $reason,
+      clone_path: (if $path == "" then null else $path end)}'
+}
+
+# fetch_batch <path> <remote>: fetch without prompts. ssh runs in batch mode so
+# a host-key or passphrase prompt cannot hang the run, unless the user already
+# chose an ssh command through GIT_SSH_COMMAND or core.sshCommand.
+fetch_batch() {
+  if [[ -z "${GIT_SSH_COMMAND:-}" && -z "$(git -C "$1" config --get core.sshCommand)" ]]; then
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes" GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q "$2" 2>/dev/null
+  else
+    GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q "$2" 2>/dev/null
+  fi
+}
+
+# sync_repo <owner/name> <clone-path>: fast-forward a clean clone that sits on
+# its default branch. Never stashes, switches branches, or resets.
+sync_repo() {
+  local repo="$1" path="$2" remote branch ref
+  if [[ -z "$path" ]] || [[ ! -d "$path" ]] ||
+    [[ "$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$path" && pwd -P)" ]] ||
+    ! remote=$(remote_for "$path" "$repo"); then
+    sync_row "$repo" skipped "no clone" ""
+    return 0
+  fi
+  if branch=$(git -C "$path" symbolic-ref --short "refs/remotes/$remote/HEAD" 2>/dev/null); then
+    branch=${branch#"$remote"/}
+  elif ! branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) ||
+    [[ -z "$branch" ]]; then
+    sync_row "$repo" skipped "default branch unknown" "$path"
+    return 0
+  fi
+  if [[ "$(git -C "$path" branch --show-current)" != "$branch" ]]; then
+    sync_row "$repo" skipped "not on default branch" "$path"
+    return 0
+  fi
+  if [[ -n "$(git -C "$path" status --porcelain)" ]]; then
+    sync_row "$repo" skipped "dirty tree" "$path"
+    return 0
+  fi
+  ref="refs/remotes/$remote/$branch"
+  if ! fetch_batch "$path" "$remote"; then
+    sync_row "$repo" skipped "pull failed" "$path"
+    return 0
+  fi
+  if ! git -C "$path" merge-base --is-ancestor HEAD "$ref" &&
+    ! git -C "$path" merge-base --is-ancestor "$ref" HEAD; then
+    sync_row "$repo" skipped "diverged" "$path"
+    return 0
+  fi
+  if git -C "$path" merge-base --is-ancestor "$ref" HEAD &&
+    [[ "$(git -C "$path" rev-parse HEAD)" != "$(git -C "$path" rev-parse "$ref")" ]]; then
+    sync_row "$repo" skipped "ahead of remote" "$path"
+    return 0
+  fi
+  # Hooks off: the fast-forward must not run the user's post-merge code.
+  if ! git -C "$path" -c core.hooksPath=/dev/null merge -q --ff-only "$ref" >/dev/null 2>&1; then
+    sync_row "$repo" skipped "pull failed" "$path"
+    return 0
+  fi
+  sync_row "$repo" synced "" "$path"
+}
+
+# sync_all <config-json> <prs-json>: sync each repo that has rows; print an array.
+sync_all() {
+  local cfg="$1" prs="$2" repo path rows="[]"
+  while IFS= read -r repo; do
+    # shellcheck disable=SC2016 # $r is a jq variable
+    path=$(jq -r --arg r "$repo" '
+      ($r | ascii_downcase) as $lr
+      | ([.monitor[] | select(.kind == "repo" and (.repo | ascii_downcase) == $lr) | .path]
+         | map(select(. != null)) | first) as $p
+      | if $p != null then $p
+        elif .default_clone_path != null then .default_clone_path + "/" + ($r | split("/")[1])
+        else "" end' <<<"$cfg") || return 1
+    rows=$(jq -c --argjson row "$(sync_repo "$repo" "$path")" '. + [$row]' <<<"$rows") || return 1
+  done < <(jq -r '[.[].repo] | unique_by(ascii_downcase) | .[]' <<<"$prs")
+  printf '%s\n' "$rows"
+}
+
+main() {
+  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs syncs top
+  while (($#)); do
+    case "$1" in
+      --help | -h)
+        usage
+        return 0
+        ;;
+      --config)
+        config="${2:?--config needs a path}"
+        shift
+        ;;
+      --dump-config) dump_config=1 ;;
+      --dump-queries) dump_queries=1 ;;
+      -*)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        return "$EX_GENERIC"
+        ;;
+      *) repo="$1" ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$repo" && -z "$config" ]]; then
+    usage >&2
+    return "$EX_GENERIC"
+  fi
+
+  if [[ -n "$config" ]]; then
+    cfg=$(load_config "$config")
+    if ((dump_config)); then
+      printf '%s\n' "$cfg"
+      return 0
+    fi
+  else
+    [[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || {
+      echo "expected owner/repo, got: $repo" >&2
+      return "$EX_GENERIC"
+    }
+    top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    cfg=$(jq -cn --arg r "$repo" --arg pwd "${top:-$PWD}" \
+      '{default_clone_path: null, monitor: [{kind: "repo", repo: $r, path: $pwd}]}')
+  fi
+
+  require_auth
+  LOGIN=$(run_gh api user --jq .login)
+  queries=$(build_queries "$cfg" "$LOGIN" "$([[ -n "$repo" ]] && echo true || echo false)")
+  if ((dump_queries)); then
+    printf '%s\n' "$queries"
+    return 0
+  fi
+  found=$(discover "$cfg" "$queries")
+  now=${REASSESS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  prs=$(classify_all "$(jq -c .prs <<<"$found")" "$now")
+  syncs=$(sync_all "$cfg" "$prs")
+  # shellcheck disable=SC2016 # $prs, $syncs are jq variables
+  jq -c --slurpfile prs <(printf '%s' "$prs") --slurpfile syncs <(printf '%s' "$syncs") '
+    . + {
+      prs: ($prs[0] | map(. as $p | .clone_path = ([$syncs[0][]
+        | select((.repo | ascii_downcase) == ($p.repo | ascii_downcase)) | .clone_path][0]))),
+      sync: $syncs[0]
+    }' <<<"$found"
+}
+
+main "$@"
