@@ -89,6 +89,26 @@ require_auth() {
   fi
 }
 
+# run_gh <gh args...>: print gh's stdout. On failure print its stderr and
+# return 3 for a rate limit, else 1.
+run_gh() {
+  local err out
+  err=$(mktemp)
+  if out=$(gh "$@" 2>"$err"); then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if grep -qi 'rate limit' "$err"; then
+    echo "rate limited: gh $*" >&2
+    rm -f "$err"
+    return "$EX_RATE_LIMIT"
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  return "$EX_GENERIC"
+}
+
 # build_queries <config-json> <login>: print a JSON array of search queries,
 # one per (org or repo chunk) x role. Repo entries share queries, ten per chunk.
 build_queries() {
@@ -112,24 +132,15 @@ build_queries() {
 # discover <config-json> <queries-json>: run every search and print
 # {"prs": [...], "truncated": [...]}. Any search failure aborts with no output.
 discover() {
-  local cfg="$1" queries="$2" errfile q role scope out found="[]" truncated="[]"
+  local cfg="$1" queries="$2" q role scope out found="[]" truncated="[]"
   local -a args
-  errfile=$(mktemp)
-  trap 'rm -f "$errfile"' RETURN
   while IFS= read -r q; do
     args=()
     while IFS= read -r a; do args+=("$a"); done < <(jq -r '.args[]' <<<"$q")
     role=$(jq -r .role <<<"$q")
     scope=$(jq -r .scope <<<"$q")
-    if ! out=$(gh search prs "${args[@]}" --limit 1000 \
-      --json repository,number,title,author,isDraft,updatedAt 2>"$errfile"); then
-      if grep -qi 'rate limit' "$errfile"; then
-        echo "rate limited during: $role $scope" >&2
-        return "$EX_RATE_LIMIT"
-      fi
-      cat "$errfile" >&2
-      return "$EX_GENERIC"
-    fi
+    out=$(run_gh search prs "${args[@]}" --limit 1000 \
+      --json repository,number,title,author,isDraft,updatedAt) || return $?
     # shellcheck disable=SC2016 # $role, $new are jq variables
     found=$(jq -c --argjson new "$out" --arg role "$role" '
       . + [$new[] | {
@@ -161,8 +172,128 @@ discover() {
     }' <<<"$found"
 }
 
+# shellcheck disable=SC2016 # $owner, $repo, $number are GraphQL variables
+THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes { isResolved comments(first: 100) { nodes { author { login } createdAt } } }
+      }
+    }
+  }
+}'
+
+# classify_pr <pr-json> <now-utc>: fetch detail for one candidate and print its row.
+classify_pr() {
+  local pr="$1" now="$2" repo number owner name view threads checks drafty
+  repo=$(jq -r .repo <<<"$pr")
+  number=$(jq -r .number <<<"$pr")
+  owner=${repo%%/*}
+  name=${repo#*/}
+  view=$(run_gh pr view "$number" --repo "$repo" --json comments,reviews,commits) || return $?
+  threads=$(run_gh api graphql -f query="$THREADS_QUERY" -f owner="$owner" -f repo="$name" \
+    -F number="$number") || return $?
+  checks='{"state": "skipped", "items": []}'
+  drafty=$(jq -r '(.author != $login) and (.isDraft | not)' --arg login "$LOGIN" <<<"$pr")
+  if [[ "$drafty" == "true" ]]; then
+    # gh pr checks exits non-zero for failing or pending checks, so judge by
+    # the JSON on stdout, not the exit code.
+    local out errf
+    errf=$(mktemp)
+    out=$(gh pr checks "$number" --repo "$repo" --required --json name,bucket 2>"$errf") || true
+    if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out"; then
+      checks=$(jq -c '{state: "ok", items: .}' <<<"$out")
+    elif grep -qi 'rate limit' "$errf"; then
+      rm -f "$errf"
+      echo "rate limited: gh pr checks $number" >&2
+      return "$EX_RATE_LIMIT"
+    else
+      checks='{"state": "unavailable", "items": []}'
+    fi
+    rm -f "$errf"
+  fi
+  # shellcheck disable=SC2016 # all $names below are jq variables
+  jq -cn --argjson pr "$pr" --argjson v "$view" --argjson t "$threads" \
+    --argjson checks "$checks" --arg login "$LOGIN" --arg now "$now" '
+    def isbot: endswith("[bot]");
+    def latest: if length == 0 then null else max end;
+    def secs: fromdateiso8601;
+    ($pr.author == $login) as $mine
+    | ($t.data.repository.pullRequest.reviewThreads.nodes // []) as $threads
+    | [
+        ($v.comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment"}),
+        ($v.reviews[]? | select(.state != "PENDING")
+          | {who: (.author.login // "ghost"), at: .submittedAt, kind: "review", state: .state,
+             trivial: (.state == "COMMENTED" and ((.body // "") == ""))}),
+        ($threads[] | .isResolved as $res | .comments.nodes[]
+          | {who: (.author.login // "ghost"), at: .createdAt, kind: "inline", resolved: $res})
+      ] as $ev
+    | [$v.commits[]? | {at: .committedDate, who: [.authors[]?.login]}] as $commits
+    | ([$ev[] | select(.who == $login) | .at] | latest) as $my_touch
+    | ([$ev[] | select(.who == $login and .kind == "review") | .at] | latest) as $my_review
+    | ([$ev[] | select(.who == $login) | .at] + [$commits[] | select(.who | index($login)) | .at]
+       | latest) as $my_activity
+    | ([$commits[] | .at] | latest) as $head
+    | [$ev[] | select(.who != $login and ((.trivial // false) | not)
+                      and ((.resolved // false) | not)
+                      and ((.who | isbot | not) or .kind == "inline"))] as $others
+    | ([$others[] | .at] | latest) as $last_other
+    | ([$others[] | select(.who | isbot) | .who] | unique) as $bots
+    | ([$ev[] | select(.who == $pr.author) | .at] + [$commits[] | select(.who | index($pr.author)) | .at]
+       | latest) as $author_last
+    | ($my_review != null and ($now | secs) - ($my_review | secs) >= 604800
+       and ($author_last == null or $author_last <= $my_review)) as $stale
+    | ([$checks.items[] | select(.bucket == "fail") | .name]) as $failing
+    | ($mine | not) as $theirs
+    | (if $mine then
+         (if $last_other != null and $last_other > ($my_activity // "") then "A" else null end)
+       elif $my_touch != null then
+         (if $head != null and $head > $my_touch then "B" else null end)
+       elif ($pr.isDraft | not) then "C"
+       else null end) as $bucket
+    | ($theirs and ($pr.isDraft | not) and (($failing | length) > 0 or $stale)) as $draftable
+    | {
+        repo: $pr.repo, number: $pr.number, title: $pr.title, author: $pr.author,
+        isDraft: $pr.isDraft, updatedAt: $pr.updatedAt, roles: $pr.roles,
+        bucket: $bucket, draft_candidate: $draftable,
+        reasons: (
+          (if $bucket == "A" then
+             ["new feedback from " + ([$others[] | select(.at > ($my_activity // "")) | .who] | unique | join(", "))]
+           else [] end)
+          + (if $bucket == "B" then
+               [([$commits[] | select(.at > $my_touch)] | length | tostring) + " commits since my last review or comment"]
+             else [] end)
+          + (if $bucket == "B"
+                and ([$ev[] | select(.who == $login and .kind == "review")] | sort_by(.at) | last | .state) == "APPROVED"
+             then ["previously approved"] else [] end)
+          + (if $bucket == "A" and ($bots | length) > 0
+             then ["bot review with inline comments from " + ($bots | join(", "))] else [] end)
+          + (if ($failing | length) > 0 then ["required checks failing: " + ($failing | join(", "))] else [] end)
+          + (if $theirs and $stale then ["no author activity for 7+ days after my review"] else [] end)
+          + (if $checks.state == "unavailable" then ["required checks unavailable"] else [] end)
+        ),
+        clone_path: null,
+        raw: {last_other_activity: $last_other, my_last_activity: $my_activity,
+              my_last_review: $my_review, head_commit: $head}
+      }'
+}
+
+# classify_all <prs-json> <now-utc>: classify every candidate, keep rows that
+# need attention, and sort by bucket then updatedAt (newest first).
+classify_all() {
+  local prs="$1" now="$2" rows="[]" pr row
+  while IFS= read -r pr; do
+    row=$(classify_pr "$pr" "$now") || return $?
+    rows=$(jq -c --argjson row "$row" '. + [$row]' <<<"$rows")
+  done < <(jq -c '.[]' <<<"$prs")
+  jq -c '
+    def rank: {"A": 0, "B": 1, "C": 2}[.bucket // ""] // 3;
+    map(select(.bucket != null or .draft_candidate))
+    | sort_by(.updatedAt) | reverse | sort_by(rank)' <<<"$rows"
+}
+
 main() {
-  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found
+  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -213,7 +344,9 @@ main() {
     return 0
   fi
   found=$(discover "$cfg" "$queries")
-  jq -c '. + {sync: []}' <<<"$found"
+  now=${REASSESS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  prs=$(classify_all "$(jq -c .prs <<<"$found")" "$now")
+  jq -c --argjson prs "$prs" '. + {prs: $prs, sync: []}' <<<"$found"
 }
 
 main "$@"

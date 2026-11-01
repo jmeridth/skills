@@ -114,6 +114,7 @@ monitor:
   - org: my-org
 '
   fixture search_prs__my_org "[$(search_row my-org/r 1 alice true), $(search_row my-org/r 2 me true), $(search_row my-org/r 3 alice false)]"
+  view 2 "[$(c bob 2026-10-25T00:00:00Z)]" "[]" "[$(cm me 2026-10-20T00:00:00Z)]"
   prs
   [ "$(jq -c '[.prs[].number] | sort' <<<"$output")" = '[2,3]' ]
 }
@@ -134,7 +135,7 @@ monitor:
 monitor:
   - org: my-org
 '
-  jq -cn '[range(1000) | {repository: {nameWithOwner: "my-org/r", name: "r"}, number: ., title: "t", author: {login: "alice"}, isDraft: false, updatedAt: "2026-10-30T00:00:00Z"}]' \
+  jq -cn '[range(1000) | {repository: {nameWithOwner: "my-org/r", name: "r", isArchived: true}, number: ., title: "t", author: {login: "alice"}, isDraft: false, updatedAt: "2026-10-30T00:00:00Z"}]' \
     >"$GH_STUB_DIR/search_prs__my_org.json"
   prs
   [ "$status" -eq 0 ]

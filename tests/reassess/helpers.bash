@@ -27,9 +27,29 @@ fixture() {
 # search_row <repo> <number> <author> [isDraft] [archived]: one gh search row.
 search_row() {
   jq -cn --arg repo "$1" --argjson n "$2" --arg author "$3" \
-    --argjson draft "${4:-false}" --argjson archived "${5:-false}" '{
+    --argjson draft "${4:-false}" --argjson archived "${5:-false}" \
+    --arg updated "${6:-2026-10-30T00:00:00Z}" '{
       repository: {nameWithOwner: $repo, name: ($repo | split("/")[1]), isArchived: $archived},
       number: $n, title: ("PR " + ($n | tostring)), author: {login: $author},
-      isDraft: $draft, updatedAt: "2026-10-30T00:00:00Z"
+      isDraft: $draft, updatedAt: $updated
     }'
 }
+
+# Event builders for classification tests. Timestamps are plain strings.
+# c <login> <ts>: issue comment. rv <login> <ts> <state> [body]: review.
+# cm <login> <ts>: commit. th <resolved> <login> <ts>: review thread, one comment.
+c() { jq -cn --arg l "$1" --arg t "$2" '{author: {login: $l}, createdAt: $t, body: "x"}'; }
+rv() { jq -cn --arg l "$1" --arg t "$2" --arg s "$3" --arg b "${4:-looks good}" '{author: {login: $l}, submittedAt: $t, state: $s, body: $b}'; }
+cm() { jq -cn --arg l "$1" --arg t "$2" '{committedDate: $t, authors: [{login: $l}]}'; }
+th() { jq -cn --argjson r "$1" --arg l "$2" --arg t "$3" '{isResolved: $r, comments: {nodes: [{author: {login: $l}, createdAt: $t}]}}'; }
+
+# view <n> <comments...>: write pr_view__<n>.json from three JSON arrays.
+view() {
+  jq -cn --argjson c "$2" --argjson r "$3" --argjson m "$4" '{comments: $c, reviews: $r, commits: $m}' \
+    >"$GH_STUB_DIR/pr_view__$1.json"
+}
+threads() {
+  jq -cn --argjson n "$2" '{data: {repository: {pullRequest: {reviewThreads: {nodes: $n}}}}}' \
+    >"$GH_STUB_DIR/api_graphql__number_$1.json"
+}
+checks() { fixture "pr_checks__$1" "$2"; }
