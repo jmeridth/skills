@@ -18,3 +18,18 @@ write_config() {
   printf '%s\n' "$1" >"$BATS_TEST_TMPDIR/config.yaml"
   CONFIG="$BATS_TEST_TMPDIR/config.yaml"
 }
+
+# fixture <name> <json>: set the stub's answer for gh calls keyed <name>.
+fixture() {
+  printf '%s\n' "$2" >"$GH_STUB_DIR/$1.json"
+}
+
+# search_row <repo> <number> <author> [isDraft] [archived]: one gh search row.
+search_row() {
+  jq -cn --arg repo "$1" --argjson n "$2" --arg author "$3" \
+    --argjson draft "${4:-false}" --argjson archived "${5:-false}" '{
+      repository: {nameWithOwner: $repo, name: ($repo | split("/")[1]), isArchived: $archived},
+      number: $n, title: ("PR " + ($n | tostring)), author: {login: $author},
+      isDraft: $draft, updatedAt: "2026-10-30T00:00:00Z"
+    }'
+}

@@ -15,6 +15,7 @@ Usage:
   reassess-candidates owner/repo
   reassess-candidates --config PATH
   reassess-candidates --dump-config --config PATH
+  reassess-candidates --dump-queries (owner/repo | --config PATH)
   reassess-candidates --help
 
 Exit codes: 1 generic, 2 config error, 3 rate limit, 4 gh not authenticated.
@@ -81,8 +82,87 @@ load_config() {
   printf '%s\n' "$out"
 }
 
+require_auth() {
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "gh is not authenticated; run: gh auth login" >&2
+    exit "$EX_UNAUTH"
+  fi
+}
+
+# build_queries <config-json> <login>: print a JSON array of search queries,
+# one per (org or repo chunk) x role. Repo entries share queries, ten per chunk.
+build_queries() {
+  # shellcheck disable=SC2016 # $login is a jq variable
+  jq -c --arg login "$2" '
+    ["review-requested", "author", "reviewed-by", "commenter"] as $roles
+    | ["--state", "open", "--archived=false"] as $common
+    | ([.monitor[] | select(.kind == "org") | .org] | unique_by(ascii_downcase)) as $orgs
+    | ([.monitor[] | select(.kind == "repo") | .repo] | unique_by(ascii_downcase)
+       | [range(0; length; 10) as $i | .[$i:$i + 10]]) as $chunks
+    | [
+        ($orgs[] as $o | $roles[] as $r
+          | {role: $r, scope: ("org:" + $o),
+             args: (["--" + $r, $login, "--owner", $o] + $common)}),
+        ($chunks[] as $c | $roles[] as $r
+          | {role: $r, scope: ("repo:" + ($c | join(" repo:"))),
+             args: (["--" + $r, $login] + [$c[] | ("--repo", .)] + $common)})
+      ]' <<<"$1"
+}
+
+# discover <config-json> <queries-json>: run every search and print
+# {"prs": [...], "truncated": [...]}. Any search failure aborts with no output.
+discover() {
+  local cfg="$1" queries="$2" errfile q role scope out found="[]" truncated="[]"
+  local -a args
+  errfile=$(mktemp)
+  trap 'rm -f "$errfile"' RETURN
+  while IFS= read -r q; do
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(jq -r '.args[]' <<<"$q")
+    role=$(jq -r .role <<<"$q")
+    scope=$(jq -r .scope <<<"$q")
+    if ! out=$(gh search prs "${args[@]}" --limit 1000 \
+      --json repository,number,title,author,isDraft,updatedAt 2>"$errfile"); then
+      if grep -qi 'rate limit' "$errfile"; then
+        echo "rate limited during: $role $scope" >&2
+        return "$EX_RATE_LIMIT"
+      fi
+      cat "$errfile" >&2
+      return "$EX_GENERIC"
+    fi
+    # shellcheck disable=SC2016 # $role, $new are jq variables
+    found=$(jq -c --argjson new "$out" --arg role "$role" '
+      . + [$new[] | {
+        repo: .repository.nameWithOwner, number: .number, title: .title,
+        author: .author.login, isDraft: .isDraft, updatedAt: .updatedAt,
+        archived: (.repository.isArchived // false), roles: [$role]}]' <<<"$found")
+    if [[ "$(jq length <<<"$out")" -ge 1000 ]]; then
+      truncated=$(jq -c --arg q "$role $scope" '. + [{query: $q}]' <<<"$truncated")
+    fi
+  done < <(jq -c '.[]' <<<"$queries")
+
+  # shellcheck disable=SC2016 # $cfg, $login, $truncated are jq variables
+  jq -c --argjson cfg "$cfg" --argjson truncated "$truncated" --arg login "$LOGIN" '
+    def key: (.repo | ascii_downcase) + "#" + (.number | tostring);
+    ([$cfg.monitor[] | select(.kind == "repo") | .repo | ascii_downcase]) as $explicit
+    | ([$cfg.monitor[] | select(.kind == "org")
+        | {org: (.org | ascii_downcase), exclude: (.exclude | map(ascii_downcase))}]) as $orgs
+    | def excluded:
+        (.repo | ascii_downcase) as $r
+        | ($r | split("/")) as [$owner, $name]
+        | ($explicit | index($r) | not)
+          and any($orgs[]; .org == $owner and (.exclude | index($name) != null));
+    {
+      prs: (group_by(key) | map(.[0] + {roles: (map(.roles[]) | unique)})
+            | map(select((.archived | not) and (excluded | not)
+                         and ((.isDraft | not) or .author == $login)))
+            | map(del(.archived))),
+      truncated: $truncated
+    }' <<<"$found"
+}
+
 main() {
-  local repo="" config="" dump_config=0 cfg
+  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -94,6 +174,7 @@ main() {
         shift
         ;;
       --dump-config) dump_config=1 ;;
+      --dump-queries) dump_queries=1 ;;
       -*)
         echo "unknown flag: $1" >&2
         usage >&2
@@ -115,7 +196,24 @@ main() {
       printf '%s\n' "$cfg"
       return 0
     fi
+  else
+    [[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || {
+      echo "expected owner/repo, got: $repo" >&2
+      return "$EX_GENERIC"
+    }
+    cfg=$(jq -cn --arg r "$repo" \
+      '{default_clone_path: null, monitor: [{kind: "repo", repo: $r, path: null}]}')
   fi
+
+  require_auth
+  LOGIN=$(gh api user --jq .login)
+  queries=$(build_queries "$cfg" "$LOGIN")
+  if ((dump_queries)); then
+    printf '%s\n' "$queries"
+    return 0
+  fi
+  found=$(discover "$cfg" "$queries")
+  jq -c '. + {sync: []}' <<<"$found"
 }
 
 main "$@"
