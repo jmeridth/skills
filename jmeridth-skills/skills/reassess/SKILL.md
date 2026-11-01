@@ -6,7 +6,7 @@ argument-hint: [owner/repo | refresh]
 
 ## Reassess Workflow
 
-When invoked, follow this workflow automatically. Steps 1-4 never post, comment, resolve, or launch anything. The one write is the script's clone sync: a `git fetch` and a fast-forward of clean clones on their default branch (details in step 2). Never make other changes, post comments, or launch reviews before the user approves in step 5.
+When invoked, follow this workflow automatically. Steps 1-4 never post, comment, resolve, or launch anything. The one write is the script's clone sync: a `git fetch` and a fast-forward of clean clones on their default branch (details in step 2). Never make other changes, post comments, or launch reviews before the user answers with row numbers in step 5.
 
 A script does the deterministic work: discovery, bucket and draft-candidate classification, and clone sync. It is the single source of truth for those rules. Do not recompute them by hand. Your job is the judgment around its output.
 
@@ -77,33 +77,49 @@ What the buckets mean (the script applies these; use them to explain, not to rec
 
 ### 4. Report the assessment
 
-Print a summary table before doing anything else. In `refresh` mode, include the `Repo` column. In single-repo mode, drop it.
+Print one table before doing anything else. Number every row, starting at 1 and counting straight through all buckets without restarting, so the user can answer with row numbers. In `refresh` mode include the `Repo` column. In single-repo mode, drop it.
 
 ```
-| Repo | PR | Title | Author | Bucket | What changed | Recommended action |
-| --- | --- | --- | --- | --- | --- | --- |
-| o/api | #12 | Fix race in worker pool | alice | B | 2 commits since my review | re-review (review skill) |
-| o/api | #15 | Add retry logic | me | A | new feedback from bob | address comments (pr-comments skill) |
-| o/web | #17 | Refactor config loader | carol | - | required checks failing: build | move to draft? |
+| # | Repo | PR | Title | Author | Bucket | What changed | Action |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | o/api | #15 | Add retry logic | me | A | new feedback from bob | comments |
+| 2 | o/api | #12 | Fix race in worker pool | alice | B | 2 commits since my review | review |
+| 3 | o/web | #17 | Refactor config loader | carol | - | required checks failing: build | draft |
 ```
 
 - Link every PR as a clickable markdown link
-- For each draft candidate, state the reason from `reasons` and set the recommended action to "move to draft?"
-- The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order
+- The `Action` column is the recommended action, one word from the list in step 5. Bucket A gets `comments`, B and C get `review`, and a draft candidate with no bucket gets `draft`
+- A draft candidate that also has a bucket keeps the bucket's action. Say "also draft candidate: {reason}" in the `What changed` column. The user can still answer `draft` for that row
+- The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order and number in that order
 - If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention" and stop. If `truncated` is not empty, say the result may be incomplete instead
+- End the report with one line telling the user how to answer: `Reply with row numbers and an action, for example "1 comments, 2-4 review, 5 draft, 6 skip". A bare number runs the Action shown.`
 
 ### 5. Wait for approval, then act
 
-Ask the user which PRs to act on. Never proceed without an explicit choice. Then, one PR at a time:
+Wait for the user to answer with row numbers. Never act without an explicit answer.
 
-- **Bucket A** (my PR, new comments): invoke the `pr-comments` skill with the PR number
-- **Bucket B** (stale review): invoke the `review` skill with the PR number, and tell it to focus on the delta since my last review (the commits pushed after `raw.my_last_touch`, which is the later of my last review or comment)
-- **Bucket C** (needs first review): invoke the `review` skill with the PR number for a full review
-- **Draft candidates**: ask the user explicitly, per PR, whether to move it to draft. On approval, run `gh pr ready {number} --repo {repo} --undo`. If the command fails for lack of permission (write access is required to draft someone else's PR), report that and move on - do not retry or work around it. Never move a PR to draft without explicit per-PR approval
-- If neither skill is available, say so and offer a manual `gh` based workflow instead of silently improvising
+Actions the user can give:
+
+| Action | What it does |
+| --- | --- |
+| `review` | Invoke the `review` skill. Bucket B: tell it to focus on the delta since `raw.my_last_touch`, the later of my last review or comment. Bucket C: a full review |
+| `comments` | Invoke the `pr-comments` skill. Bucket A rows |
+| `draft` | Move the PR to draft with `gh pr ready {number} --repo {repo} --undo`. Valid on any row flagged as a draft candidate |
+| `details` | Show the row's `reasons` and `raw` timestamps. Changes nothing |
+| `skip` | Do nothing with the row |
+
+Reading the answer:
+
+- Accept single numbers, lists (`1,3,5`), and ranges (`2-4`), each followed by an action. A bare number means the action in the `Action` column
+- Numbers refer to the most recent table only. After a new run, renumber and ignore numbers from older tables
+- If a number does not exist, an action does not fit the row (for example `comments` on a bucket B row), or the answer is ambiguous, ask one short question. Do not guess
+- Before acting, echo the parsed plan in one line per row, for example `2 review o/api#12`, then proceed. Do not ask for a second confirmation
+- A row number with `draft` is the explicit per-PR approval the draft rule needs. A number without `draft` never moves a PR to draft
+- If `draft` fails for lack of permission (write access is required to draft someone else's PR), report that and move on. Do not retry or work around it
+- If the `review` or `pr-comments` skill is not available, say so and offer a manual `gh` based workflow instead of silently improvising
 - Always pass the repo explicitly when handing off, since the skill may run outside that repo's directory
 
-When several PRs are approved at once, the `review` skill can run them concurrently in separate orchestrator subagents.
+When several rows get `review`, the `review` skill can run them concurrently in separate orchestrator subagents.
 
 ### Rules
 
