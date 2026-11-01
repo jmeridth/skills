@@ -292,8 +292,93 @@ classify_all() {
     | sort_by(.updatedAt) | reverse | sort_by(rank)' <<<"$rows"
 }
 
+# remote_for <path> <owner/name>: print a remote whose URL points at the repo.
+remote_for() {
+  local path="$1" want r url
+  want=$(tr '[:upper:]' '[:lower:]' <<<"$2")
+  while IFS= read -r r; do
+    url=$(git -C "$path" remote get-url "$r" 2>/dev/null) || continue
+    url=$(tr '[:upper:]' '[:lower:]' <<<"$url")
+    url=${url%/}
+    url=${url%.git}
+    if [[ "$url" == *"/$want" || "$url" == *":$want" ]]; then
+      echo "$r"
+      return 0
+    fi
+  done < <(
+    printf 'upstream\norigin\n'
+    git -C "$path" remote
+  )
+  return 1
+}
+
+sync_row() {
+  jq -cn --arg repo "$1" --arg status "$2" --arg reason "$3" --arg path "$4" \
+    '{repo: $repo, status: $status, reason: $reason,
+      clone_path: (if $path == "" then null else $path end)}'
+}
+
+# sync_repo <owner/name> <clone-path>: fast-forward a clean clone that sits on
+# its default branch. Never stashes, switches branches, or resets.
+sync_repo() {
+  local repo="$1" path="$2" remote branch ref
+  if [[ -z "$path" ]] || [[ ! -d "$path" ]] ||
+    [[ "$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$path" && pwd -P)" ]] ||
+    ! remote=$(remote_for "$path" "$repo"); then
+    sync_row "$repo" skipped "no clone" ""
+    return 0
+  fi
+  if branch=$(git -C "$path" symbolic-ref --short "refs/remotes/$remote/HEAD" 2>/dev/null); then
+    branch=${branch#"$remote"/}
+  elif ! branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) ||
+    [[ -z "$branch" ]]; then
+    sync_row "$repo" skipped "default branch unknown" "$path"
+    return 0
+  fi
+  if [[ "$(git -C "$path" branch --show-current)" != "$branch" ]]; then
+    sync_row "$repo" skipped "not on default branch" "$path"
+    return 0
+  fi
+  if [[ -n "$(git -C "$path" status --porcelain)" ]]; then
+    sync_row "$repo" skipped "dirty tree" "$path"
+    return 0
+  fi
+  ref="refs/remotes/$remote/$branch"
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$path" fetch -q "$remote" 2>/dev/null; then
+    sync_row "$repo" skipped "pull failed" "$path"
+    return 0
+  fi
+  if ! git -C "$path" merge-base --is-ancestor HEAD "$ref" &&
+    ! git -C "$path" merge-base --is-ancestor "$ref" HEAD; then
+    sync_row "$repo" skipped "diverged" "$path"
+    return 0
+  fi
+  if ! git -C "$path" merge -q --ff-only "$ref" >/dev/null 2>&1; then
+    sync_row "$repo" skipped "pull failed" "$path"
+    return 0
+  fi
+  sync_row "$repo" synced "" "$path"
+}
+
+# sync_all <config-json> <prs-json>: sync each repo that has rows; print an array.
+sync_all() {
+  local cfg="$1" prs="$2" repo path rows="[]"
+  while IFS= read -r repo; do
+    # shellcheck disable=SC2016 # $r is a jq variable
+    path=$(jq -r --arg r "$repo" '
+      ($r | ascii_downcase) as $lr
+      | ([.monitor[] | select(.kind == "repo" and (.repo | ascii_downcase) == $lr) | .path]
+         | map(select(. != null)) | first) as $p
+      | if $p != null then $p
+        elif .default_clone_path != null then .default_clone_path + "/" + ($r | split("/")[1])
+        else "" end' <<<"$cfg")
+    rows=$(jq -c --argjson row "$(sync_repo "$repo" "$path")" '. + [$row]' <<<"$rows")
+  done < <(jq -r '[.[].repo] | unique_by(ascii_downcase) | .[]' <<<"$prs")
+  printf '%s\n' "$rows"
+}
+
 main() {
-  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs
+  local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs syncs
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -332,8 +417,8 @@ main() {
       echo "expected owner/repo, got: $repo" >&2
       return "$EX_GENERIC"
     }
-    cfg=$(jq -cn --arg r "$repo" \
-      '{default_clone_path: null, monitor: [{kind: "repo", repo: $r, path: null}]}')
+    cfg=$(jq -cn --arg r "$repo" --arg pwd "$PWD" \
+      '{default_clone_path: null, monitor: [{kind: "repo", repo: $r, path: $pwd}]}')
   fi
 
   require_auth
@@ -346,7 +431,14 @@ main() {
   found=$(discover "$cfg" "$queries")
   now=${REASSESS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   prs=$(classify_all "$(jq -c .prs <<<"$found")" "$now")
-  jq -c --argjson prs "$prs" '. + {prs: $prs, sync: []}' <<<"$found"
+  syncs=$(sync_all "$cfg" "$prs")
+  # shellcheck disable=SC2016 # $prs, $syncs are jq variables
+  jq -c --argjson prs "$prs" --argjson syncs "$syncs" '
+    . + {
+      prs: ($prs | map(. as $p | .clone_path = ([$syncs[]
+        | select((.repo | ascii_downcase) == ($p.repo | ascii_downcase)) | .clone_path][0]))),
+      sync: $syncs
+    }' <<<"$found"
 }
 
 main "$@"
