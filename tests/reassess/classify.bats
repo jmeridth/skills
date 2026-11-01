@@ -211,6 +211,17 @@ publish() {
   [[ "$(jq -r '.prs[0].reasons | join(" ")' <<<"$output")" == *"unavailable"* ]]
 }
 
+@test "a branch with no required checks is not reported as unavailable" {
+  pr 3 carol
+  publish
+  view 3 "[]" "[]" "[$(cm carol 2026-10-28T00:00:00Z)]"
+  threads 3 "[]"
+  echo "no required checks reported on the 'topic' branch" >"$GH_STUB_DIR/pr_checks__3.fail"
+  run_repo o/r
+  [ "$(jq -r '.prs[0].draft_candidate' <<<"$output")" = "false" ]
+  [[ "$(jq -r '.prs[0].reasons | join(" ")' <<<"$output")" != *"unavailable"* ]]
+}
+
 @test "sorted by bucket then updatedAt, newest first" {
   pr 10 carol false 2026-10-29T00:00:00Z
   pr 11 carol false 2026-10-30T00:00:00Z

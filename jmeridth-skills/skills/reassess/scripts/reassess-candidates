@@ -203,6 +203,8 @@ classify_pr() {
     out=$(gh pr checks "$number" --repo "$repo" --required --json name,bucket 2>"$errf") || true
     if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out"; then
       checks=$(jq -c '{state: "ok", items: .}' <<<"$out")
+    elif grep -qi 'no required checks reported' "$errf"; then
+      checks='{"state": "ok", "items": []}'
     elif grep -qi 'rate limit' "$errf"; then
       rm -f "$errf"
       echo "rate limited: gh pr checks $number" >&2

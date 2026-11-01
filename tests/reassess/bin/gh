@@ -27,7 +27,8 @@ for arg in "${@:3}"; do
   [[ "$arg" == -* ]] && continue
   slug="${arg//[^a-zA-Z0-9]/_}"
   if [[ -f "$dir/${base}__${slug}.fail" ]]; then
-    echo "boom" >&2
+    # The .fail file holds the stderr message; empty means a generic failure.
+    if [[ -s "$dir/${base}__${slug}.fail" ]]; then cat "$dir/${base}__${slug}.fail" >&2; else echo "boom" >&2; fi
     exit 1
   fi
   if [[ -f "$dir/${base}__${slug}.json" ]]; then
