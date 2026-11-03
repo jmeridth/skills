@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Create a good pull request. Gathers branch context, drafts a short human-readable description with the right issue reference, copyedits it, then opens the PR as a draft with the right assignee and labels. Use when asked to open a PR, draft a PR description, or write up a branch for review.
+description: Create a good pull request. Gathers branch context, drafts a short human-readable description with the right issue reference, copyedits it, then opens the PR as a draft with the right assignee. Use when asked to open a PR, draft a PR description, or write up a branch for review.
 ---
 
 ## Creating a pull request
@@ -13,7 +13,6 @@ description: Create a good pull request. Gathers branch context, drafts a short 
 - **Always assign me (`jmeridth`) as the assignee** when opening PRs - this helps me track work in progress and follow up
 - Always check a PR's status (open/merged/closed) before pushing commits to it
 - **Always use the repo's PR template**: Before opening a PR, check for a pull request template (e.g., `.github/pull_request_template.md` or `.github/PULL_REQUEST_TEMPLATE.md`) in the target repository and use it as the structure for the PR description. Do not write a PR body from scratch when a template exists.
-- **ai-review label**: When creating a PR, check if the target repository has a label named `ai-review` (`gh label list --search "ai-review"`). If it exists, add it to the PR at creation time (`--label "ai-review"`). If it does not exist, skip it silently - do not create the label.
 - **Public vs private repo**: Before writing the PR description, check whether the target repository is public or private (`gh repo view <owner>/<repo> --json visibility -q .visibility`). If the repo is **public**, keep the PR description generic and do not include any proprietary or internal information. Specifically:
   - Do not link to internal trackers (Linear, internal Jira, internal Confluence)
   - Do not reference internal project names, environments, customer names, infra hostnames, internal IPs, internal SA emails, or internal repo names
