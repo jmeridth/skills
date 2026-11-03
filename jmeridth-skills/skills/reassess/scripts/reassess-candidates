@@ -31,6 +31,7 @@ monitor:                          # required, non-empty
     exclude: [legacy, sandbox]    # optional repo names to skip
   - repo: other-org/one-repo      # a single owner/name
     path: ~/work/one-repo         # optional clone path override
+pr-labels: [needs-review]         # optional; read by the pr skill, not reassess
 SCHEMA
 }
 

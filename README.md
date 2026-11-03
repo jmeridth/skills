@@ -41,7 +41,7 @@ New and changed skills arrive with the update. No per-repo setup is required.
 | Skill | What it does |
 | --- | --- |
 | `commit` | Create a meaningful git commit message based on the current changes. |
-| `pr` | Open a pull request: gather context, draft and copyedit a short description, set assignee and labels. |
+| `pr` | Open a pull request: gather context, draft and copyedit a short description, set the assignee, and add the `pr-labels` from `~/.config/jmeridth-skills/config.yaml` that exist on the repo. |
 | `pr-comments` | Fetch, assess, and address PR review comments, then reply and resolve threads. |
 | `review` | Review a PR or the current feature branch with a multi-model, verification-first workflow. |
 | `reassess` | Scan open PRs for new comments on yours, stale reviews, and PRs awaiting review. `reassess refresh` covers every org and repo in `~/.config/jmeridth-skills/config.yaml`. |

@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Create a good pull request. Gathers branch context, drafts a short human-readable description with the right issue reference, copyedits it, then opens the PR as a draft with the right assignee. Use when asked to open a PR, draft a PR description, or write up a branch for review.
+description: Create a good pull request. Gathers branch context, drafts a short human-readable description with the right issue reference, copyedits it, then opens the PR as a draft with the right assignee and any configured labels. Use when asked to open a PR, draft a PR description, or write up a branch for review.
 ---
 
 ## Creating a pull request
@@ -13,6 +13,12 @@ description: Create a good pull request. Gathers branch context, drafts a short 
 - **Always assign me (`jmeridth`) as the assignee** when opening PRs - this helps me track work in progress and follow up
 - Always check a PR's status (open/merged/closed) before pushing commits to it
 - **Always use the repo's PR template**: Before opening a PR, check for a pull request template (e.g., `.github/pull_request_template.md` or `.github/PULL_REQUEST_TEMPLATE.md`) in the target repository and use it as the structure for the PR description. Do not write a PR body from scratch when a template exists.
+- **Labels from config**: If `~/.config/jmeridth-skills/config.yaml` exists and has a `pr-labels` list, add each listed label that exists on the target repository at creation time (`--label <name>`).
+  - Read the list with `yq -r '."pr-labels"[]?' ~/.config/jmeridth-skills/config.yaml`.
+  - Read the repository's labels with `gh label list --repo <owner>/<repo> --limit 1000 --json name -q '.[].name'`, and match names exactly.
+  - Skip a listed label the repository doesn't have, and say which ones you skipped. Never create a label.
+  - No file, no `pr-labels` key, or an empty list means no labels.
+  - If the file isn't valid YAML or `pr-labels` isn't a list of strings, say so and open the PR without labels.
 - **Public vs private repo**: Before writing the PR description, check whether the target repository is public or private (`gh repo view <owner>/<repo> --json visibility -q .visibility`). If the repo is **public**, keep the PR description generic and do not include any proprietary or internal information. Specifically:
   - Do not link to internal trackers (Linear, internal Jira, internal Confluence)
   - Do not reference internal project names, environments, customer names, infra hostnames, internal IPs, internal SA emails, or internal repo names
