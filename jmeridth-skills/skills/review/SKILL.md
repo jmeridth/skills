@@ -18,7 +18,7 @@ Delegate every review to its own orchestrator subagent so the main context stays
 - **The orchestrator cannot ask me questions.** At each gate below, it stops and returns `status: needs-decision` with its proposed answer. The main context relays the question, then continues the same orchestrator with `SendMessage`.
   - "Should we do this?" answered "no" or "unclear".
   - Tier confirmation for any PR ≤ 150 changed lines.
-- **Return a structured report, not prose.** Fields: `status` (`done` or `needs-decision`), head SHA, tier and exact model IDs that ran, the "should we do this?" answer, other reviewers and their mode (complement, defer, coordinate), and findings. Each finding carries file, new-side line derived from the diff, severity, `Verified` or `Observation`, claim, and evidence. Couldn't-confirm items go in their own list.
+- **Return a structured report, not prose.** Fields: `status` (`done` or `needs-decision`), head SHA, tier and exact model IDs that ran, the "should we do this?" answer, other reviewers and their mode (complement, defer, coordinate), and findings. Each finding carries file, new-side line derived from the diff, severity, `Verified` or `Observation`, claim, and evidence. Couldn't-confirm items go in their own list. Re-check PR state, head SHA, and reviews right before returning, and put any change (merged, closed, new head, new approval) at the top of the report.
 - **Fallback.** If the orchestrator has no Agent tool and cannot spawn reviewers, it says so in the report and runs the passes itself in sequence. Tell me the review had less model diversity than the tier calls for.
 - **Main context keeps the rest.** It humanizes comments, shows me drafts, and posts after I approve. Subagents never draft in my voice, post, approve, or resolve threads.
 
@@ -26,6 +26,7 @@ Delegate every review to its own orchestrator subagent so the main context stays
 
 Before assessing anything or launching agents, sync to the PR's current state. A stale checkout produces findings against code the author has already changed, wasting a full multi-model pass and risking re-opening things that are already fixed.
 
+- Check the PR's state first (`gh pr view <pr> --json state,reviewDecision,autoMergeRequest`). If it is merged or closed, stop and report that instead of reviewing. If it already has an approval or automerge enabled, say so before launching agents, since it may merge before the review finishes.
 - Fetch the PR's current head SHA (`gh pr view <pr> --json headRefOid`) and review against that exact SHA — never whatever a local branch or existing worktree happens to point at.
 - If you build a worktree, create it at that head SHA. If a worktree already exists, update it to the current head before reading any code, and re-confirm the head has not moved since.
 - Read existing review threads and review submission bodies first (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `.../pulls/{n}/reviews`, and the GraphQL review threads). Note which findings are already raised, or already fixed in a newer commit, and do not re-report them.
@@ -163,6 +164,7 @@ Apply these to every summary and every comment. This is load-bearing: a review t
 ### Line-level targeting (mandatory)
 
 - **Every PR comment MUST target a specific line in the diff.** Do not post top-level PR comments for code findings.
+- **Re-check state immediately before posting.** Run `gh pr view <pr> --json state,headRefOid` as its own command, never chained with the post. If the state is anything but `OPEN`, or the head moved since the drafts, do not post. Show the result and ask.
 - Before posting, parse the diff to get the exact file path and line number for each finding. Use `gh api` or `gh pr diff` to get the current diff and extract line numbers.
 - Use the GitHub pull request review comments API (`POST /repos/{owner}/{repo}/pulls/{pull_number}/comments`) with these required fields:
   - `path` - relative file path (e.g. `src/handler.go`)
