@@ -160,6 +160,7 @@ Apply these to every summary and every comment. This is load-bearing: a review t
 - When specific code changes are needed, use GitHub suggestion blocks
 - When a suggestion adds or edits a code comment, write it for a reader who never saw the diff. No "now", "instead of", "for now", or "new". Phrase hazards counterfactually ("a mutex here would reintroduce the race", not "reintroduces").
 - **Always confirm before approving PRs** unless explicitly told to approve. Asking to see the approval message is not the same as giving the go-ahead.
+- **Only request changes for security issues.** Post every other review with the `COMMENT` event, even when it has blocking findings. A change request makes me the blocker. A comment lets the author push updates and lets other maintainers approve and merge.
 
 ### Line-level targeting (mandatory)
 
