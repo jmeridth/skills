@@ -48,48 +48,29 @@ Then mark any merged branch whose worktree is dirty as **Skip (dirty)**. Uncommi
 
 Prunable worktrees (the `prunable` marker in `git worktree list --porcelain`) are tracked separately.
 
-### 4. Confirm force-deletes (one prompt)
+### 4. Clean up worktrees (before deleting branches)
 
-If any branch is **Merged (verified)**, list them all in one batch and ask once:
-
-```
-These branches were squash/rebase merged. Their tips match the merged PR heads, so nothing is lost.
-Force-delete them, along with their clean worktrees?
-
-  <branch>  <short-tip>  <PR url>  [worktree: <path>]
-  ...
-
-Force-delete N verified branches? [Y/n]
-```
-
-- End the turn and wait for the reply.
-- Treat `y`, `yes`, `confirmed`, `proceed`, or an empty reply as yes. Treat anything else as no.
-- On no, keep those branches and their worktrees, and report them as "skipped (force-delete declined)".
-- Skip this step entirely if there are no **Merged (verified)** branches.
-
-### 5. Clean up worktrees (before deleting branches)
-
-- Remove the worktree of each **Merged (fast-forward)** branch, and of each confirmed **Merged (verified)** branch: `git worktree remove <path>`
+- Remove the worktree of each **Merged (fast-forward)** and **Merged (verified)** branch: `git worktree remove <path>`
 - Prune prunable worktrees: `git worktree prune`
 - Do this BEFORE branch deletion. Git refuses to delete a branch that is checked out in a worktree.
 - **NEVER force-remove a worktree** (no `--force`). A dirty worktree is already classified as Skip (dirty) and stays untouched.
 
-### 6. Delete merged branches
+### 5. Delete merged branches
 
 - **Merged (fast-forward)**: `git branch -d <branch>`
-- **Merged (verified)** and confirmed in step 4: `git branch -D <branch>`
-- **Use `git branch -D` only on a branch that passed the SHA verification in step 3 AND was confirmed in step 4 of this run.** Never use it on any other branch.
+- **Merged (verified)**: `git branch -D <branch>`. Do not ask first. The SHA match in step 3 already proves the branch's commits are in the merged PR.
+- **Use `git branch -D` only on a branch that passed the SHA verification in step 3 of this run.** Never use it on any other branch.
 - If `-d` unexpectedly refuses a fast-forward branch, do not escalate to `-D`. Report it as skipped.
 
-### 7. Report summary
+### 6. Report summary
 
 Print a summary:
 
 ```
 Repo: <repo-name>
 Branch: main @ <short-sha>
-Deleted branches: <list, marking which used -D, or "none">
-Skipped branches: <list with reason (diverged / open PR / no PR / dirty / force-delete declined), or "none">
+Deleted branches: <list, or "none">; for each -D, show the short tip and the PR it matched
+Skipped branches: <list with reason (diverged / open PR / no PR / dirty), or "none">
 Worktrees removed: <list or "none">
 Worktrees pruned: <count or "none">
 Worktrees skipped: <list with reason, or "none">
