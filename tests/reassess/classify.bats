@@ -25,6 +25,10 @@ publish() {
   )]"
 }
 
+# wait_of / reasons_of: the first row's maintainer_wait flag and joined reasons.
+wait_of() { jq -r '.prs[0].maintainer_wait' <<<"$output"; }
+reasons_of() { jq -r '.prs[0].reasons | join(" | ")' <<<"$output"; }
+
 @test "bucket A when another person's comment is newer than my push" {
   pr 1 me
   publish
@@ -247,4 +251,161 @@ publish() {
   GH_STUB_FAIL_MATCH="pr view" run_repo o/r
   [ "$status" -eq 3 ]
   [ -z "$output" ]
+}
+
+# Maintainer wait gate. NOW is 2026-10-31, so 7 days back is 2026-10-24.
+
+@test "C waits when another maintainer commented within 7 days" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-28T00:00:00Z MEMBER)]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(jq -r '.prs[0].bucket' <<<"$output")" = "C" ]
+  [ "$(wait_of)" = "true" ]
+  [[ "$(reasons_of)" == *"waiting on author: dave engaged 3 days ago"* ]]
+  [ "$(jq -r '.prs[0].raw.last_maintainer_activity' <<<"$output")" = "2026-10-28T00:00:00Z" ]
+  [ "$(jq -r '.prs[0].raw.author_last_activity' <<<"$output")" = "2026-10-20T00:00:00Z" ]
+}
+
+@test "C does not wait after 7+ quiet days since the maintainer engaged" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-20T00:00:00Z OWNER)]" "[]" "[$(cm carol 2026-10-19T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(jq -r '.prs[0].bucket' <<<"$output")" = "C" ]
+  [ "$(wait_of)" = "false" ]
+  [[ "$(reasons_of)" == *"dave engaged 11 days ago; author quiet 7+ days"* ]]
+}
+
+@test "C waits when the author was active within 7 days after a maintainer engaged" {
+  pr 3 carol
+  publish
+  view 3 "[$(c carol 2026-10-29T00:00:00Z)]" \
+    "[$(rv dave 2026-10-10T00:00:00Z CHANGES_REQUESTED 'please split this' COLLABORATOR)]" \
+    "[$(cm carol 2026-10-09T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "true" ]
+  [[ "$(reasons_of)" == *"waiting on author: author active 2 days ago"* ]]
+  [ "$(jq -r '.prs[0].raw.author_last_activity' <<<"$output")" = "2026-10-29T00:00:00Z" ]
+}
+
+@test "an inline thread from a maintainer counts as engagement" {
+  pr 3 carol
+  publish
+  view 3 "[]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[$(th false dave 2026-10-29T00:00:00Z COLLABORATOR)]"
+  run_repo o/r
+  [ "$(wait_of)" = "true" ]
+}
+
+@test "CONTRIBUTOR and NONE associations do not count as maintainers" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-28T00:00:00Z CONTRIBUTOR), $(c erin 2026-10-29T00:00:00Z NONE)]" \
+    "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+  [ "$(jq -r '.prs[0].raw.last_maintainer_activity' <<<"$output")" = "null" ]
+}
+
+@test "a bot does not count as a maintainer, even with a MEMBER association" {
+  pr 3 carol
+  publish
+  view 3 "[$(c 'github-actions[bot]' 2026-10-28T00:00:00Z MEMBER)]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[$(th false 'copilot[bot]' 2026-10-29T00:00:00Z MEMBER)]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+  [ "$(jq -r '.prs[0].raw.last_maintainer_activity' <<<"$output")" = "null" ]
+}
+
+@test "an empty COMMENTED review from a maintainer does not count" {
+  pr 3 carol
+  publish
+  view 3 "[]" "[$(rv dave 2026-10-28T00:00:00Z COMMENTED '' MEMBER)]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+}
+
+@test "an approval from another maintainer does not gate" {
+  pr 3 carol
+  publish
+  view 3 "[]" "[$(rv dave 2026-10-29T00:00:00Z APPROVED 'lgtm' MEMBER)]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+  [ "$(jq -r '.prs[0].raw.last_maintainer_activity' <<<"$output")" = "null" ]
+}
+
+@test "a resolved inline thread from a maintainer does not gate" {
+  pr 3 carol
+  publish
+  view 3 "[]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[$(th true dave 2026-10-29T00:00:00Z MEMBER)]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+  [ "$(jq -r '.prs[0].raw.last_maintainer_activity' <<<"$output")" = "null" ]
+}
+
+@test "B is not gated but notes the other maintainer" {
+  pr 2 alice
+  publish
+  view 2 "[$(c dave 2026-10-29T00:00:00Z MEMBER)]" "[$(rv me 2026-10-20T00:00:00Z COMMENTED)]" \
+    "[$(cm alice 2026-10-22T00:00:00Z)]"
+  threads 2 "[]"
+  run_repo o/r
+  [ "$(jq -r '.prs[0].bucket' <<<"$output")" = "B" ]
+  [ "$(wait_of)" = "false" ]
+  [[ "$(reasons_of)" == *"maintainer dave also engaged 2 days ago"* ]]
+}
+
+@test "review request plus a maintainer @-mention overrides the wait" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-29T00:00:00Z MEMBER '@ME can you take a look?')]" "[]" \
+    "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(jq -c '.prs[0].roles | index("review-requested") != null' <<<"$output")" = "true" ]
+  [ "$(wait_of)" = "false" ]
+  [[ "$(reasons_of)" == *"review explicitly requested by dave"* ]]
+}
+
+@test "an @-mention without a review request still waits" {
+  pr 3 carol
+  publish
+  # Role searches pass my login first, so this fixture empties them; only the open search finds the PR.
+  fixture search_prs__me "[]"
+  view 3 "[$(c dave 2026-10-29T00:00:00Z MEMBER '@me can you take a look?')]" "[]" \
+    "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(jq -c '.prs[0].roles' <<<"$output")" = '["open"]' ]
+  [ "$(wait_of)" = "true" ]
+}
+
+@test "a review request without an @-mention still waits" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-29T00:00:00Z MEMBER '@meow please look')]" "[]" \
+    "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "true" ]
+}
+
+@test "exactly 7 days of quiet ends the wait; one second less does not" {
+  pr 3 carol
+  publish
+  view 3 "[$(c dave 2026-10-24T00:00:00Z MEMBER)]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  threads 3 "[]"
+  run_repo o/r
+  [ "$(wait_of)" = "false" ]
+  view 3 "[$(c dave 2026-10-24T00:00:01Z MEMBER)]" "[]" "[$(cm carol 2026-10-20T00:00:00Z)]"
+  run_repo o/r
+  [ "$(wait_of)" = "true" ]
 }

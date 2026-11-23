@@ -36,12 +36,15 @@ search_row() {
 }
 
 # Event builders for classification tests. Timestamps are plain strings.
-# c <login> <ts>: issue comment. rv <login> <ts> <state> [body]: review.
-# cm <login> <ts>: commit. th <resolved> <login> <ts>: review thread, one comment.
-c() { jq -cn --arg l "$1" --arg t "$2" '{author: {login: $l}, createdAt: $t, body: "x"}'; }
-rv() { jq -cn --arg l "$1" --arg t "$2" --arg s "$3" --arg b "${4:-looks good}" '{author: {login: $l}, submittedAt: $t, state: $s, body: $b}'; }
+# The optional association is GitHub's authorAssociation (MEMBER, OWNER,
+# COLLABORATOR, CONTRIBUTOR, NONE); it defaults to NONE.
+# c <login> <ts> [assoc] [body]: issue comment.
+# rv <login> <ts> <state> [body] [assoc]: review.
+# cm <login> <ts>: commit. th <resolved> <login> <ts> [assoc]: review thread, one comment.
+c() { jq -cn --arg l "$1" --arg t "$2" --arg a "${3:-NONE}" --arg b "${4:-x}" '{author: {login: $l}, authorAssociation: $a, createdAt: $t, body: $b}'; }
+rv() { jq -cn --arg l "$1" --arg t "$2" --arg s "$3" --arg b "${4-looks good}" --arg a "${5:-NONE}" '{author: {login: $l}, authorAssociation: $a, submittedAt: $t, state: $s, body: $b}'; }
 cm() { jq -cn --arg l "$1" --arg t "$2" '{committedDate: $t, authors: [{login: $l}]}'; }
-th() { jq -cn --argjson r "$1" --arg l "$2" --arg t "$3" '{isResolved: $r, comments: {nodes: [{author: {login: $l}, createdAt: $t}]}}'; }
+th() { jq -cn --argjson r "$1" --arg l "$2" --arg t "$3" --arg a "${4:-NONE}" '{isResolved: $r, comments: {nodes: [{author: {login: $l}, authorAssociation: $a, createdAt: $t}]}}'; }
 
 # view <n> <comments...>: write pr_view__<n>.json from three JSON arrays.
 view() {

@@ -196,7 +196,7 @@ THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
-        nodes { isResolved comments(first: 100) { nodes { author { login } createdAt } } }
+        nodes { isResolved comments(first: 100) { nodes { author { login } authorAssociation createdAt } } }
       }
     }
   }
@@ -240,15 +240,19 @@ classify_pr() {
     def isbot: endswith("[bot]");
     def latest: if length == 0 then null else max end;
     def secs: fromdateiso8601;
+    def days_ago: ((($now | secs) - secs) / 86400 | floor | tostring) + " days ago";
     ($pr.author == $login) as $mine
     | ($t[0].data.repository.pullRequest.reviewThreads.nodes // []) as $threads
     | [
-        ($v[0].comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment"}),
+        ($v[0].comments[]? | {who: (.author.login // "ghost"), at: .createdAt, kind: "comment",
+                               assoc: .authorAssociation, body: (.body // "")}),
         ($v[0].reviews[]? | select(.state != "PENDING")
           | {who: (.author.login // "ghost"), at: .submittedAt, kind: "review", state: .state,
+             assoc: .authorAssociation, body: (.body // ""),
              trivial: (.state == "COMMENTED" and ((.body // "") == ""))}),
         ($threads[] | .isResolved as $res | .comments.nodes[]
-          | {who: (.author.login // "ghost"), at: .createdAt, kind: "inline", resolved: $res})
+          | {who: (.author.login // "ghost"), at: .createdAt, kind: "inline", resolved: $res,
+             assoc: .authorAssociation})
       ] as $ev
     | [$v[0].commits[]? | {at: .committedDate, who: [.authors[]?.login]}] as $commits
     | ([$ev[] | select(.who == $login) | .at] | latest) as $my_touch
@@ -263,6 +267,21 @@ classify_pr() {
     | ([$others[] | select(.who | isbot) | .who] | unique) as $bots
     | ([$ev[] | select(.who == $pr.author) | .at] + [$commits[] | select(.who | index($pr.author)) | .at]
        | latest) as $author_last
+    # Another maintainer: not me, not the author, not a bot, with write-level
+    # association. Approvals and resolved threads leave nobody waiting on the author.
+    | [$ev[] | select(.who != $login and .who != $pr.author and (.who | isbot | not)
+                      and ((.trivial // false) | not) and .state != "APPROVED"
+                      and ((.resolved // false) | not)
+                      and (.assoc as $a | ["MEMBER", "OWNER", "COLLABORATOR"] | index($a)))]
+      as $maint
+    | ($maint | sort_by(.at) | last) as $maint_last
+    | ($maint_last.at) as $last_maint
+    | ([$last_maint, $author_last] | map(select(. != null)) | latest) as $quiet_since
+    | ([$maint[] | select(.kind != "inline"
+                          and (.body | test("@" + $login + "(?![A-Za-z0-9-])"; "i"))) | .who]
+       | unique) as $mentioners
+    | (($pr.roles | index("review-requested")) != null and ($mentioners | length) > 0) as $asked
+    | ($last_maint != null and ($now | secs) - ($quiet_since | secs) < 604800) as $recent
     | ($my_review != null and ($now | secs) - ($my_review | secs) >= 604800
        and ($author_last == null or $author_last < $my_review)) as $stale
     | ([$checks.items[] | select(.bucket == "fail") | .name]) as $failing
@@ -273,11 +292,12 @@ classify_pr() {
          (if $head != null and $head > $my_touch then "B" else null end)
        elif ($pr.isDraft | not) then "C"
        else null end) as $bucket
+    | ($bucket == "C" and $recent and ($asked | not)) as $wait
     | ($theirs and ($pr.isDraft | not) and (($failing | length) > 0 or $stale)) as $draftable
     | {
         repo: $pr.repo, number: $pr.number, title: $pr.title, author: $pr.author,
         isDraft: $pr.isDraft, updatedAt: $pr.updatedAt, roles: $pr.roles,
-        bucket: $bucket, draft_candidate: $draftable,
+        bucket: $bucket, draft_candidate: $draftable, maintainer_wait: $wait,
         reasons: (
           (if $bucket == "A" then
              ["new feedback from " + ([$others[] | select(.at > ($my_activity // "")) | .who] | unique | join(", "))]
@@ -288,6 +308,20 @@ classify_pr() {
           + (if $bucket == "B"
                 and ([$ev[] | select(.who == $login and .kind == "review")] | sort_by(.at) | last | .state) == "APPROVED"
              then ["previously approved"] else [] end)
+          + (if $wait then
+               ["waiting on author: "
+                + (if $author_last != null and $author_last > $last_maint
+                   then "author active " + ($author_last | days_ago)
+                   else $maint_last.who + " engaged " + ($last_maint | days_ago) end)]
+             else [] end)
+          + (if $bucket == "C" and $last_maint != null and $asked then
+               ["review explicitly requested by " + ($mentioners | join(", "))]
+             elif $bucket == "C" and $last_maint != null and ($recent | not) then
+               [$maint_last.who + " engaged " + ($last_maint | days_ago) + "; author quiet 7+ days"]
+             else [] end)
+          + (if $bucket == "B" and $last_maint != null then
+               ["maintainer " + $maint_last.who + " also engaged " + ($last_maint | days_ago)]
+             else [] end)
           + (if $bucket == "A" and ($bots | length) > 0
              then ["bot review with inline comments from " + ($bots | join(", "))] else [] end)
           + (if ($failing | length) > 0 then ["required checks failing: " + ($failing | join(", "))] else [] end)
@@ -297,7 +331,8 @@ classify_pr() {
         clone_path: null,
         raw: {last_other_activity: $last_other, my_last_activity: $my_activity,
               my_last_review: $my_review, my_last_touch: $my_touch,
-              head_commit: $head}
+              head_commit: $head, last_maintainer_activity: $last_maint,
+              author_last_activity: $author_last}
       }'
 }
 

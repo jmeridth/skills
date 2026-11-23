@@ -50,10 +50,11 @@ Output:
 ```json
 {
   "prs": [{"repo": "", "number": 0, "title": "", "author": "", "bucket": "A|B|C|null",
-           "isDraft": false, "draft_candidate": false, "reasons": [], "roles": [],
-           "updatedAt": "", "clone_path": "or null",
+           "isDraft": false, "draft_candidate": false, "maintainer_wait": false,
+           "reasons": [], "roles": [], "updatedAt": "", "clone_path": "or null",
            "raw": {"last_other_activity": "", "my_last_activity": "", "my_last_review": "",
-                   "my_last_touch": "", "head_commit": ""}}],
+                   "my_last_touch": "", "head_commit": "",
+                   "last_maintainer_activity": "or null", "author_last_activity": "or null"}}],
   "sync": [{"repo": "", "status": "synced|skipped", "reason": "", "clone_path": "or null"}],
   "truncated": [{"query": ""}]
 }
@@ -65,6 +66,9 @@ What the buckets mean (the script applies these; use them to explain, not to rec
 - **B**: a PR I reviewed or commented on where the head commit is newer than my last touch
 - **C**: a PR by someone else, not a draft, where I left no review or comment. Single-repo mode considers every open PR in the repo. `refresh` considers only PRs with a review request, to keep org-wide runs bounded
 - A PR appears once, in the highest bucket (A, then B, then C)
+- **Maintainer wait** (`maintainer_wait: true`) is a flag on bucket C rows: another maintainer (a non-bot `MEMBER`, `OWNER`, or `COLLABORATOR` who is neither me nor the author) has commented, reviewed, or left an inline comment (approvals and resolved threads do not count), and the later of their last engagement and the author's last activity is under 7 days old. The author gets 7 days to respond before I pile on. The row keeps its bucket and its place in the sort, and `reasons` says who engaged or when the author was last active
+- The wait does not apply when the PR requests my review and another maintainer @-mentioned me in a comment or review. `reasons` then names who asked
+- Bucket B rows are never gated. When another maintainer has engaged, `reasons` notes it
 - **Draft candidate** is a flag, not a bucket: required checks failing, or no author activity 7+ days after my review. It never applies to my PRs or drafts
 
 ### 3. Apply judgment
@@ -85,14 +89,15 @@ Print one table before doing anything else. Number every row, starting at 1 and 
 | 1 | o/api | #15 | Add retry logic | me | A | new feedback from bob | comments |
 | 2 | o/api | #12 | Fix race in worker pool | alice | B | 2 commits since my review | review |
 | 3 | o/web | #17 | Refactor config loader | carol | - | required checks failing: build | draft |
+| 4 | o/web | #19 | Add audit log | dave | C | waiting on author: erin engaged 2 days ago | wait |
 ```
 
 - Link every PR as a clickable markdown link
-- The `Action` column is the recommended action, one word from the list in step 5. Bucket A gets `comments`, B and C get `review`, and a draft candidate with no bucket gets `draft`
+- The `Action` column is the recommended action, one word from the list in step 5. Bucket A gets `comments`, B and C get `review`, a C row with `maintainer_wait: true` gets `wait`, and a draft candidate with no bucket gets `draft`
 - A draft candidate that also has a bucket keeps the bucket's action. Say "also draft candidate: {reason}" in the `What changed` column. The user can still answer `draft` for that row
 - The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order and number in that order
 - If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention" and stop. If `truncated` is not empty, say the result may be incomplete instead
-- End the report with one line telling the user how to answer: `Reply with row numbers and an action, for example "1 comments, 2-4 review, 5 draft, 6 skip". A bare number runs the Action shown.`
+- End the report with one line telling the user how to answer: `Reply with row numbers and an action, for example "1 comments, 2-4 review, 5 draft, 6 skip". A bare number runs the Action shown; on a wait row it does nothing.`
 
 ### 5. Wait for approval, then act
 
@@ -105,6 +110,7 @@ Actions the user can give:
 | `review` | Invoke the `review` skill. Bucket B: tell it to focus on the delta since `raw.my_last_touch`, the later of my last review or comment. Bucket C: a full review |
 | `comments` | Invoke the `pr-comments` skill. Bucket A rows |
 | `draft` | Move the PR to draft with `gh pr ready {number} --repo {repo} --undo`. Valid on any row flagged as a draft candidate |
+| `wait` | Do nothing yet: another maintainer is waiting on the author. A bare number on a `wait` row does nothing. The user can still answer `review` for the row to review it anyway |
 | `details` | Show the row's `reasons` and `raw` timestamps. Changes nothing |
 | `skip` | Do nothing with the row |
 

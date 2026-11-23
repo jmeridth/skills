@@ -18,6 +18,7 @@ Delegate every review to its own orchestrator subagent so the main context stays
 - **The orchestrator cannot ask me questions.** At each gate below, it stops and returns `status: needs-decision` with its proposed answer. The main context relays the question, then continues the same orchestrator with `SendMessage`.
   - "Should we do this?" answered "no" or "unclear".
   - Tier confirmation for any PR ≤ 150 changed lines.
+  - Another maintainer is waiting on the author (see "Wait on the author when another maintainer is engaged").
 - **Return a structured report, not prose.** Fields: `status` (`done` or `needs-decision`), head SHA, tier and exact model IDs that ran, the "should we do this?" answer, other reviewers and their mode (complement, defer, coordinate), and findings. Each finding carries file, new-side line derived from the diff, severity, `Verified` or `Observation`, claim, and evidence. Couldn't-confirm items go in their own list. Re-check PR state, head SHA, and reviews right before returning, and put any change (merged, closed, new head, new approval) at the top of the report.
 - **Fallback.** If the orchestrator has no Agent tool and cannot spawn reviewers, it says so in the report and runs the passes itself in sequence. Tell me the review had less model diversity than the tier calls for.
 - **Main context keeps the rest.** It humanizes comments, shows me drafts, and posts after I approve. Subagents never draft in my voice, post, approve, or resolve threads.
@@ -40,6 +41,17 @@ Before assessing the diff or launching any review agents, answer "should we do t
 - Consider: does this solve a real problem? Is this the right layer/repo for it? Does it duplicate existing functionality? Does it conflict with the project's direction or an existing approach?
 - State your answer explicitly in the review output before any findings
 - If the answer is "no" or "unclear", stop and raise that with me before doing the line-by-line review - a well-implemented change we should not make is still a change we should not make
+
+### Wait on the author when another maintainer is engaged
+
+Before launching any reviewer models on someone else's PR, check whether another maintainer is already waiting on the author. Another maintainer is a non-bot human with `MEMBER`, `OWNER`, or `COLLABORATOR` association who is neither me nor the author. Their comments, reviews, and inline comments count. Approvals and resolved threads do not, since nobody is waiting on the author.
+
+- If another maintainer has engaged, and their last engagement or the author's last activity (comment, review reply, or commit) is less than 7 days old, stop. The orchestrator returns `status: needs-decision` proposing to wait, and names the maintainer and the timestamps
+- Skip this gate when I explicitly asked for this PR's review: the PR requests my review and a maintainer @-mentioned me, or I gave a direct instruction to review it anyway
+- The 7-day rule matches `reassess`, whose script flags such rows with `maintainer_wait`
+- Why: a full two-model review once ran on a PR where a maintainer's request to the author was still unanswered. Every finding was moot once the author responded
+
+**Audit:** Before launching reviewer models, list other maintainers who engaged, their last engagement, and the author's last activity. If any falls within 7 days and no explicit request is cited, stop and return `needs-decision`.
 
 ### Multi-model review
 
