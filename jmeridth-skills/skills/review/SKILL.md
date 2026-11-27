@@ -17,7 +17,6 @@ Delegate every review to its own orchestrator subagent so the main context stays
 - **The orchestrator runs the workflow end to end:** sync to the head SHA, read existing threads, answer "should we do this?", size the diff, pick the tier, spawn one reviewer subagent per model in that tier (in parallel), verify and deduplicate their findings, and return the report.
 - **The orchestrator cannot ask me questions.** At each gate below, it stops and returns `status: needs-decision` with its proposed answer. The main context relays the question, then continues the same orchestrator with `SendMessage`.
   - "Should we do this?" answered "no" or "unclear".
-  - Tier confirmation for any PR ≤ 150 changed lines.
   - Another maintainer is waiting on the author (see "Wait on the author when another maintainer is engaged").
 - **Return a structured report, not prose.** Fields: `status` (`done` or `needs-decision`), head SHA, tier and exact model IDs that ran, the "should we do this?" answer, other reviewers and their mode (complement, defer, coordinate), and findings. Each finding carries file, new-side line derived from the diff, severity, `Verified` or `Observation`, claim, and evidence. Couldn't-confirm items go in their own list. Re-check PR state, head SHA, and reviews right before returning, and put any change (merged, closed, new head, new approval) at the top of the report.
 - **Fallback.** If the orchestrator has no Agent tool and cannot spawn reviewers, it says so in the report and runs the passes itself in sequence. Tell me the review had less model diversity than the tier calls for.
@@ -68,7 +67,7 @@ Scale the number of review agents (and which models) to the size and severity of
 
 - **Severity overrides size.** Risk bumps the tier **up** regardless of line count: treat auth, crypto/signing, token or secret handling, HTTP handlers, `exec`, SQL, or access-control changes as **at least Medium** even for a tiny diff. When unsure, round up a tier.
 - **Opus is the default single reviewer.** Fable runs only in tiers with 2+ agents (Medium and Large/critical). Single-agent tiers use Opus (Small) or Sonnet (Docs/trivial).
-- **For any PR ≤ 150 changed lines, report the size and confirm the tier with me before launching agents.**
+- **Proceed with the tier you pick.** Never stop to confirm the tier, whatever the PR size. State the changed-line count, tier, and models in the report.
 - **Select models by family alias, not version.** Pass `opus`, `sonnet`, `haiku`, or `fable` as the agent's `model`. Each alias resolves to the latest model in that family (`opus` is Opus 5.5 or later), so new releases apply without editing this skill.
 - The orchestrator launches the chosen reviewer subagents in parallel, each on a different model. Instruct each agent to state its exact model ID at the top of its output. **Always display the exact model IDs that ran**, not just the family names.
 - Synthesize findings across all models — surface only issues that multiple models flag or that you independently verify. Present a unified, deduplicated report organized by severity.
