@@ -22,6 +22,13 @@ fi
 
 base="${1:-}_${2:-}"
 base="${base//[^a-zA-Z0-9_]/_}"
+
+# Closed-state searches answer only from search_prs__closed.json, so fixtures
+# written for open searches never leak into the recently closed list.
+if [[ "$base" == "search_prs" && " $* " == *" --state closed "* ]]; then
+  if [[ -f "$dir/search_prs__closed.json" ]]; then cat "$dir/search_prs__closed.json"; else echo "[]"; fi
+  exit 0
+fi
 # Most specific fixture: any later non-flag argument, slugged.
 for arg in "${@:3}"; do
   [[ "$arg" == -* ]] && continue
