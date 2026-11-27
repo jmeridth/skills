@@ -24,6 +24,7 @@ monitor:
 '
   queries
   [ "$status" -eq 0 ]
+  output=$(jq -c 'map(select(.state != "closed"))' <<<"$output")
   [ "$(jq length <<<"$output")" -eq 4 ]
   [ "$(jq -r '[.[].role] | sort | join(",")' <<<"$output")" = "author,commenter,review-requested,reviewed-by" ]
   [ "$(jq '[.[] | select(.args | index("--owner") != null and index("my-org") != null)] | length' <<<"$output")" -eq 4 ]
@@ -36,11 +37,12 @@ monitor:
 $entries"
   queries
   [ "$status" -eq 0 ]
+  output=$(jq -c 'map(select(.state != "closed"))' <<<"$output")
   [ "$(jq length <<<"$output")" -eq 8 ]
   [ "$(jq '[.[] | select(.role == "author") | [.args[] | select(. == "--repo")] | length] | sort | join(",")' <<<"$output")" = '"2,10"' ]
 }
 
-@test "queries are open-only and exclude archived repos" {
+@test "open-state queries exclude archived repos" {
   write_config '
 monitor:
   - org: my-org
@@ -58,7 +60,7 @@ monitor:
   - org: my-org
 '
   queries
-  [ "$(jq '[.[] | select(.args | index("jmeridth") != null)] | length' <<<"$output")" -eq 4 ]
+  [ "$(jq '[.[] | select(.args | index("jmeridth") != null)] | length' <<<"$output")" -eq 6 ]
 }
 
 @test "org exclude drops the repo" {

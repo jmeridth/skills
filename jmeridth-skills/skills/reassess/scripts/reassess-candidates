@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Discover open PRs needing attention for one repo or a config of monitored
-# repos, classify them into buckets A/B/C, and print JSON.
+# repos, classify them into buckets A/B/C, list PRs I touched that closed
+# recently, and print JSON.
 set -euo pipefail
 
 EX_GENERIC=1
@@ -11,11 +12,14 @@ EX_UNAUTH=4
 usage() {
   cat <<'USAGE'
 Usage:
-  reassess-candidates owner/repo
-  reassess-candidates --config PATH
+  reassess-candidates [--closed-since WINDOW] owner/repo
+  reassess-candidates [--closed-since WINDOW] --config PATH
   reassess-candidates --dump-config --config PATH
-  reassess-candidates --dump-queries (owner/repo | --config PATH)
+  reassess-candidates --dump-queries [--closed-since WINDOW] (owner/repo | --config PATH)
   reassess-candidates --help
+
+--closed-since sets how far back the recently closed list looks, as a
+number of days or hours (3d, 24h). Default 3d.
 
 Exit codes: 1 generic, 2 config error, 3 rate limit, 4 gh not authenticated.
 USAGE
@@ -121,14 +125,18 @@ run_gh() {
   return "$EX_GENERIC"
 }
 
-# build_queries <config-json> <login> <with-open>: print a JSON array of search
-# queries, one per (org or repo chunk) x role. Repo entries share queries, ten
-# per chunk. With-open (true/false) adds an unfiltered open-PR query per chunk,
-# which single-repo mode needs to find PRs I have not touched.
+# build_queries <config-json> <login> <with-open> <closed-since>: print a JSON
+# array of search queries, one per (org or repo chunk) x role. Repo entries
+# share queries, ten per chunk. With-open (true/false) adds an unfiltered
+# open-PR query per chunk, which single-repo mode needs to find PRs I have not
+# touched. Closed-since (an ISO timestamp) adds closed-state queries, marked
+# state "closed", for PRs I reviewed or commented on that closed since then.
 build_queries() {
-  # shellcheck disable=SC2016 # $login and $open are jq variables
-  jq -c --arg login "$2" --argjson open "${3:-false}" '
+  # shellcheck disable=SC2016 # $login, $open and $since are jq variables
+  jq -c --arg login "$2" --argjson open "${3:-false}" --arg since "$4" '
     ["review-requested", "author", "reviewed-by", "commenter"] as $roles
+    | ["reviewed-by", "commenter"] as $closed_roles
+    | ["--state", "closed", "--closed", (">=" + $since), "--archived=false"] as $closed
     | ["--state", "open", "--archived=false"] as $common
     | ([.monitor[] | select(.kind == "org") | .org] | unique_by(ascii_downcase)) as $orgs
     | ([.monitor[] | select(.kind == "repo") | .repo] | unique_by(ascii_downcase)
@@ -143,30 +151,40 @@ build_queries() {
         (if $open then $chunks[] as $c
           | {role: "open", scope: ("repo:" + ($c | join(" repo:"))),
              args: ([$c[] | ("--repo", .)] + $common)}
-        else empty end)
+        else empty end),
+        ($orgs[] as $o | $closed_roles[] as $r
+          | {role: $r, state: "closed", scope: ("org:" + $o),
+             args: (["--" + $r, $login, "--owner", $o] + $closed)}),
+        ($chunks[] as $c | $closed_roles[] as $r
+          | {role: $r, state: "closed", scope: ("repo:" + ($c | join(" repo:"))),
+             args: (["--" + $r, $login] + [$c[] | ("--repo", .)] + $closed)})
       ]' <<<"$1"
 }
 
 # discover <config-json> <queries-json>: run every search and print
-# {"prs": [...], "truncated": [...]}. Any search failure aborts with no output.
+# {"prs": [...], "closed": [...], "truncated": [...]}. Closed rows are search
+# hits only; closed_details fills them in. Any search failure aborts with no
+# output.
 discover() {
-  local cfg="$1" queries="$2" q role scope out count found="[]" truncated="[]"
+  local cfg="$1" queries="$2" q role state scope out count found="[]" truncated="[]"
   local -a args
   while IFS= read -r q; do
     args=()
     while IFS= read -r a; do args+=("$a"); done < <(jq -r '.args[]' <<<"$q")
     role=$(jq -r .role <<<"$q") || return 1
+    state=$(jq -r '.state // "open"' <<<"$q") || return 1
     scope=$(jq -r .scope <<<"$q") || return 1
     out=$(run_gh search prs "${args[@]}" --limit 1000 \
       --json repository,number,title,author,isDraft,updatedAt) || return $?
-    # shellcheck disable=SC2016 # $role, $new are jq variables
-    found=$(jq -c --slurpfile new <(printf '%s' "$out") --arg role "$role" '
+    # shellcheck disable=SC2016 # $role, $state, $new are jq variables
+    found=$(jq -c --slurpfile new <(printf '%s' "$out") --arg role "$role" --arg state "$state" '
       . + [$new[0][] | {
         repo: .repository.nameWithOwner, number: .number, title: .title,
         author: .author.login, isDraft: .isDraft, updatedAt: .updatedAt,
-        archived: (.repository.isArchived // false), roles: [$role]}]' <<<"$found") || return 1
+        archived: (.repository.isArchived // false), roles: [$role], state: $state}]' <<<"$found") || return 1
     count=$(jq length <<<"$out") || return 1
     if ((count >= 1000)); then
+      [[ "$state" == "closed" ]] && role="closed $role"
       truncated=$(jq -c --arg q "$role $scope" '. + [{query: $q}]' <<<"$truncated") || return 1
     fi
   done < <(jq -c '.[]' <<<"$queries")
@@ -182,13 +200,33 @@ discover() {
         | ($r | split("/")) as [$owner, $name]
         | ($explicit | index($r) | not)
           and any($orgs[]; .org == $owner and (.exclude | index($name) != null));
+    def merged_rows: group_by(key) | map(.[0] + {roles: (map(.roles[]) | unique)})
+      | map(select((.archived | not) and (excluded | not)));
     {
-      prs: (group_by(key) | map(.[0] + {roles: (map(.roles[]) | unique)})
-            | map(select((.archived | not) and (excluded | not)
-                         and ((.isDraft | not) or .author == $login)))
-            | map(del(.archived))),
+      prs: (map(select(.state == "open")) | merged_rows
+            | map(select((.isDraft | not) or .author == $login))
+            | map(del(.archived, .state))),
+      closed: (map(select(.state == "closed")) | merged_rows
+               | map({repo, number, title, author, roles})),
       truncated: $truncated
     }' <<<"$found"
+}
+
+# closed_details <closed-json>: look up each recently closed search hit and
+# print them newest first, with state MERGED or CLOSED and who merged it. A PR
+# reopened since the search is dropped; the open searches report it.
+closed_details() {
+  local closed="$1" pr repo number view rows="[]"
+  while IFS= read -r pr; do
+    repo=$(jq -r .repo <<<"$pr") || return 1
+    number=$(jq -r .number <<<"$pr") || return 1
+    view=$(run_gh pr view "$number" --repo "$repo" --json state,closedAt,mergedBy) || return $?
+    # shellcheck disable=SC2016 # $pr, $view are jq variables
+    rows=$(jq -c --argjson pr "$pr" --slurpfile view <(printf '%s' "$view") '
+      . + [$view[0] | select(.state != "OPEN")
+           | $pr + {state, closedAt, mergedBy: (.mergedBy.login // null)}]' <<<"$rows") || return 1
+  done < <(jq -c '.[]' <<<"$closed")
+  jq -c 'sort_by(.closedAt) | reverse' <<<"$rows"
 }
 
 # shellcheck disable=SC2016 # $owner, $repo, $number are GraphQL variables
@@ -454,6 +492,7 @@ sync_all() {
 
 main() {
   local repo="" config="" dump_config=0 dump_queries=0 cfg queries found now prs syncs top
+  local window="3d" window_secs since closed
   while (($#)); do
     case "$1" in
       --help | -h)
@@ -462,6 +501,10 @@ main() {
         ;;
       --config)
         config="${2:?--config needs a path}"
+        shift
+        ;;
+      --closed-since)
+        window="${2:?--closed-since needs a window like 3d or 24h}"
         shift
         ;;
       --dump-config) dump_config=1 ;;
@@ -481,6 +524,15 @@ main() {
     return "$EX_GENERIC"
   fi
 
+  if [[ ! "$window" =~ ^([0-9]+)([dh])$ ]]; then
+    echo "--closed-since expects a window like 3d or 24h, got: $window" >&2
+    return "$EX_GENERIC"
+  fi
+  window_secs=$((10#${BASH_REMATCH[1]} * 3600))
+  [[ "${BASH_REMATCH[2]}" == "d" ]] && window_secs=$((window_secs * 24))
+  now=${REASSESS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  since=$(jq -rn --arg now "$now" --argjson s "$window_secs" '($now | fromdateiso8601) - $s | todate')
+
   if [[ -n "$config" ]]; then
     cfg=$(load_config "$config")
     if ((dump_config)); then
@@ -499,18 +551,20 @@ main() {
 
   require_auth
   LOGIN=$(run_gh api user --jq .login)
-  queries=$(build_queries "$cfg" "$LOGIN" "$([[ -n "$repo" ]] && echo true || echo false)")
+  queries=$(build_queries "$cfg" "$LOGIN" "$([[ -n "$repo" ]] && echo true || echo false)" "$since")
   if ((dump_queries)); then
     printf '%s\n' "$queries"
     return 0
   fi
   found=$(discover "$cfg" "$queries")
-  now=${REASSESS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  closed=$(closed_details "$(jq -c .closed <<<"$found")")
   prs=$(classify_all "$(jq -c .prs <<<"$found")" "$now")
   syncs=$(sync_all "$cfg" "$prs")
   # shellcheck disable=SC2016 # $prs, $syncs are jq variables
-  jq -c --slurpfile prs <(printf '%s' "$prs") --slurpfile syncs <(printf '%s' "$syncs") '
+  jq -c --slurpfile prs <(printf '%s' "$prs") --slurpfile syncs <(printf '%s' "$syncs") \
+    --slurpfile closed <(printf '%s' "$closed") '
     . + {
+      closed: $closed[0],
       prs: ($prs[0] | map(. as $p | .clone_path = ([$syncs[0][]
         | select((.repo | ascii_downcase) == ($p.repo | ascii_downcase)) | .clone_path][0]))),
       sync: $syncs[0]

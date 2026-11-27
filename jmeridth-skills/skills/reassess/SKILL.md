@@ -35,7 +35,9 @@ SCRIPT=<skill base directory>/scripts/reassess-candidates
 "$SCRIPT" --config ~/.config/jmeridth-skills/config.yaml      # refresh
 ```
 
-It searches with `gh search prs`, fetches detail for the candidates only, classifies them, then syncs the local clone of each repo that has rows, and prints one JSON object. The sync runs `git fetch` and `git merge --ff-only`, and only on a clean tree on the default branch. A repo with no rows gets no `sync` entry. If the script is missing from the transcript, the run is invalid.
+It searches with `gh search prs`, fetches detail for the candidates only, classifies them, looks up PRs I reviewed or commented on that closed recently, then syncs the local clone of each repo that has rows, and prints one JSON object. The sync runs `git fetch` and `git merge --ff-only`, and only on a clean tree on the default branch. A repo with no rows gets no `sync` entry. If the script is missing from the transcript, the run is invalid.
+
+The recently closed window defaults to 3 days. Pass `--closed-since 24h` (or `7d`, and so on) only when the user asks for a different window.
 
 Exit codes:
 
@@ -55,6 +57,8 @@ Output:
            "raw": {"last_other_activity": "", "my_last_activity": "", "my_last_review": "",
                    "my_last_touch": "", "head_commit": "",
                    "last_maintainer_activity": "or null", "author_last_activity": "or null"}}],
+  "closed": [{"repo": "", "number": 0, "title": "", "author": "", "roles": [],
+              "state": "MERGED|CLOSED", "closedAt": "", "mergedBy": "or null"}],
   "sync": [{"repo": "", "status": "synced|skipped", "reason": "", "clone_path": "or null"}],
   "truncated": [{"query": ""}]
 }
@@ -70,6 +74,7 @@ What the buckets mean (the script applies these; use them to explain, not to rec
 - The wait does not apply when the PR requests my review and another maintainer @-mentioned me in a comment or review. `reasons` then names who asked
 - Bucket B rows are never gated. When another maintainer has engaged, `reasons` notes it
 - **Draft candidate** is a flag, not a bucket: required checks failing, or no author activity 7+ days after my review. It never applies to my PRs or drafts
+- **Closed**: a PR I reviewed or commented on that merged or closed inside the window, newest first. It is never a row and never takes an action. A PR reopened since then is left out, since the open searches report it
 
 ### 3. Apply judgment
 
@@ -96,7 +101,8 @@ Print one table before doing anything else. Number every row, starting at 1 and 
 - The `Action` column is the recommended action, one word from the list in step 5. Bucket A gets `comments`, B and C get `review`, a C row with `maintainer_wait: true` gets `wait`, and a draft candidate with no bucket gets `draft`
 - A draft candidate that also has a bucket keeps the bucket's action. Say "also draft candidate: {reason}" in the `What changed` column. The user can still answer `draft` for that row
 - The script already sorts rows by bucket, then `updatedAt`, newest first. Keep that order and number in that order
-- If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention" and stop. If `truncated` is not empty, say the result may be incomplete instead
+- After the table, when `closed` is not empty, list it under "Merged or closed recently", one line per PR: link, title, `merged by {mergedBy}` or `closed without merging`, and `closedAt`. No row numbers. Never say a PR's state is unconfirmed when it appears here; when a PR acted on earlier in the session is in neither `prs` nor `closed`, look it up with `gh pr view` instead of guessing
+- If `prs` is empty and `truncated` is empty, say "All caught up - no PRs need attention", still list `closed` if it is not empty, and stop. If `truncated` is not empty, say the result may be incomplete instead
 - End the report with one line telling the user how to answer: `Reply with row numbers and an action, for example "1 comments, 2-4 review, 5 draft, 6 skip". A bare number runs the Action shown; on a wait row it does nothing.`
 
 ### 5. Wait for approval, then act
